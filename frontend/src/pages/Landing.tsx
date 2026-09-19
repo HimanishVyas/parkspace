@@ -8,18 +8,43 @@ export default function Landing() {
     <>
       <section className="hero">
         <div className="hero__inner">
-          <h1>Find Parking. Rent Your Empty Space.</h1>
-          <p>
-            ParkSpace connects people who need parking with the houses, societies and
-            organisations that have space sitting empty. Book by the hour, the day or the month.
-          </p>
-          <div className="hero__actions">
-            <Link to="/search" className="btn btn--lg">
-              Find parking
-            </Link>
-            <Link to={provider ? "/provider/listings/new" : "/list-your-space"} className="btn btn--lg btn--secondary">
-              List my parking
-            </Link>
+          <div className="hero__copy">
+            <h1>Find Parking. Rent Your Empty Space.</h1>
+            <p>
+              ParkSpace connects people who need parking with the houses, societies and
+              organisations that have space sitting empty. Book by the hour, the day or the month.
+            </p>
+            <div className="hero__actions">
+              <Link to="/search" className="btn btn--lg">
+                Find parking
+              </Link>
+              <Link
+                to={provider ? "/provider/listings/new" : "/list-your-space"}
+                className="btn btn--lg btn--secondary"
+              >
+                List my parking
+              </Link>
+            </div>
+          </div>
+
+          {/* Decorative, and deliberately made of the product's own furniture — a
+              price pill and a bay grid — rather than stock illustration. */}
+          <div className="hero__art" aria-hidden="true">
+            <div className="hero__card hero__card--price">
+              <span className="hero__price">
+                ₹50<small>/hr</small>
+              </span>
+              <span className="hero__where">Ashram Road</span>
+              <span className="hero__meta">Covered · 2 min walk</span>
+            </div>
+            <div className="hero__card hero__card--bays">
+              <span className="hero__meta">Pick your bay</span>
+              <div className="hero__bays">
+                <i /><i className="is-off" /><i />
+                <i className="is-mine" /><i /><i className="is-off" />
+              </div>
+            </div>
+            <span className="hero__chip">Booked in 40s</span>
           </div>
         </div>
       </section>

@@ -1,3 +1,4 @@
+import ArrivalQueue from "../../components/ArrivalQueue";
 import { Link } from "react-router-dom";
 import { Alert, Badge, Empty, ErrorMessage, Loading, Panel, Stat } from "../../components/ui";
 import { api } from "../../lib/api";
@@ -34,6 +35,7 @@ export default function Dashboard() {
 
   return (
     <main className="page">
+      <ArrivalQueue />
       <div className="stack">
         <div className="row row--between">
           <div>

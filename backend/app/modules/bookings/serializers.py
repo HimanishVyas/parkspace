@@ -5,6 +5,7 @@ Two rules drive this module (PRD §22, Principle 2):
   * a renter never sees the provider's personal details, and the provider sees
     the renter's contact details only for a booking that is going ahead.
 """
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.bookings import service as booking_service
@@ -44,6 +45,19 @@ def _space_summary(booking: Booking) -> BookingSpaceSummary:
         latitude=float(space.latitude),
         longitude=float(space.longitude),
         photo_url=space.photos[0].url if space.photos else None,
+        requires_arrival_code=bool(space.requires_arrival_code),
+    )
+
+
+async def _bay_label(db: AsyncSession, booking: Booking) -> str | None:
+    """The name painted on the floor for the slot this booking holds."""
+    from app.modules.parking.models import ParkingBay
+
+    return await db.scalar(
+        select(ParkingBay.label).where(
+            ParkingBay.parking_space_id == booking.parking_space_id,
+            ParkingBay.slot_index == booking.slot_index,
+        )
     )
 
 
@@ -74,6 +88,10 @@ async def to_out(
         currency=booking.currency,
         vehicle_number=booking.vehicle_number,
         vehicle_type=VehicleType(booking.vehicle_type),
+        bay_label=await _bay_label(db, booking),
+        overstay_minutes=booking.overstay_minutes or 0,
+        overstay_amount=booking.overstay_amount or 0,
+        overstay_paid_at=booking.overstay_paid_at,
         renter_notes=booking.renter_notes,
         hold_expires_at=booking.hold_expires_at,
         confirmed_at=booking.confirmed_at,

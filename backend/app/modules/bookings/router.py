@@ -4,9 +4,15 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 
 from app.core.deps import DB, CurrentUser, client_ip
 from app.core.errors import Forbidden, NotFound
+from app.core.time import utcnow
 from app.core.ratelimit import rate_limit
-from app.modules.bookings import notifications, serializers, service
+from app.modules.bookings import arrival, notifications, overstay, serializers, service
 from app.modules.bookings.schemas import (
+    ArrivalAnnounce,
+    OverstayQuote,
+    WaitingArrival,
+    ArrivalState,
+    ArrivalVerify,
     BookingCancel,
     BookingConfirmation,
     BookingCreate,
@@ -104,6 +110,35 @@ async def list_bookings(
     return BookingList(items=items, total=total, limit=limit, offset=offset)
 
 
+@router.get("/arrivals/waiting", response_model=list[WaitingArrival])
+async def waiting_arrivals(user: CurrentUser, db: DB):
+    """Renters of mine who are at a gate right now, waiting on a code."""
+    provider = await provider_service.get_by_user(db, user.id)
+    if provider is None:
+        return []
+    config = await get_config(db)
+    waiting = await arrival.waiting_for_provider(db, provider.id, config)
+    from app.modules.users.models import User as UserModel
+
+    out = []
+    for booking, code in waiting:
+        renter = await db.get(UserModel, booking.renter_id)
+        out.append(
+            WaitingArrival(
+                booking_id=booking.id,
+                reference=booking.reference,
+                space_title=booking.parking_space.title,
+                renter_name=renter.full_name if renter else "Renter",
+                renter_phone=renter.phone if renter else None,
+                vehicle_number=booking.vehicle_number,
+                code=code.code,
+                waiting_minutes=round((utcnow() - code.requested_at).total_seconds() / 60, 1),
+                expires_at=code.expires_at,
+            )
+        )
+    return out
+
+
 @router.get("/{booking_id}", response_model=BookingOut)
 async def get_booking(booking_id: uuid.UUID, user: CurrentUser, db: DB):
     booking = await service.get_for_user(db, booking_id, user)
@@ -116,6 +151,107 @@ async def get_confirmation(booking_id: uuid.UUID, user: CurrentUser, db: DB):
     """The booking confirmation a renter shows on arrival (PRD §19)."""
     booking = await service.get_for_user(db, booking_id, user)
     return await serializers.to_confirmation(db, booking)
+
+
+# --------------------------------------------------------------------------- #
+# Arrival verification
+# --------------------------------------------------------------------------- #
+
+
+async def _arrival_view(db, booking_id: uuid.UUID, user) -> tuple:
+    """Load a booking plus its arrival state, from either side of the deal."""
+    booking = await service.get_for_user(db, booking_id, user)
+    config = await get_config(db)
+    code = await arrival.get_code(db, booking.id)
+    provider = await provider_service.get_by_user(db, user.id)
+    is_provider = provider is not None and provider.id == booking.provider_id
+    return booking, config, code, is_provider
+
+
+@router.get("/{booking_id}/arrival", response_model=ArrivalState)
+async def get_arrival(booking_id: uuid.UUID, user: CurrentUser, db: DB):
+    """Current check-in state. The code is only included for the provider."""
+    booking, config, code, is_provider = await _arrival_view(db, booking_id, user)
+    return arrival.state(booking, code, config, for_provider=is_provider)
+
+
+@router.post(
+    "/{booking_id}/arrival",
+    response_model=ArrivalState,
+    dependencies=[Depends(rate_limit("arrival_announce", 10, 300))],
+)
+async def announce_arrival(
+    booking_id: uuid.UUID,
+    data: ArrivalAnnounce,
+    user: CurrentUser,
+    db: DB,
+    background: BackgroundTasks,
+):
+    """Renter: "I've reached". Issues a code and sends it to the provider."""
+    booking = await service.get_for_user(db, booking_id, user)
+    config = await get_config(db)
+    code = await arrival.announce(db, booking, user, config, data.latitude, data.longitude)
+    await notifications.arrival_announced(
+        db, background, booking, code.code, config.arrival_code_ttl_minutes
+    )
+    await db.commit()
+    await db.refresh(code)
+    await db.refresh(booking)
+    return arrival.state(booking, code, config, for_provider=False)
+
+
+@router.post(
+    "/{booking_id}/arrival/verify",
+    response_model=BookingOut,
+    dependencies=[Depends(rate_limit("arrival_verify", 20, 300))],
+)
+async def verify_arrival(
+    booking_id: uuid.UUID,
+    data: ArrivalVerify,
+    user: CurrentUser,
+    db: DB,
+    background: BackgroundTasks,
+):
+    """Renter enters the code the provider gave them; booking becomes ACTIVE."""
+    booking = await service.get_for_user(db, booking_id, user)
+    config = await get_config(db)
+    was_active = booking.status.value == "ACTIVE"
+    booking = await arrival.verify(db, booking, user, data.code, config)
+    if not was_active:
+        await notifications.arrival_verified(db, background, booking)
+    await db.commit()
+    await db.refresh(booking)
+    return await serializers.to_out(db, booking, user, config)
+
+
+# --------------------------------------------------------------------------- #
+# Overstay
+# --------------------------------------------------------------------------- #
+@router.get("/{booking_id}/overstay", response_model=OverstayQuote)
+async def get_overstay(booking_id: uuid.UUID, user: CurrentUser, db: DB):
+    """The live meter: what is owed right now for running over."""
+    booking = await service.get_for_user(db, booking_id, user)
+    config = await get_config(db)
+    return overstay.quote(booking, config)
+
+
+@router.post("/{booking_id}/end", response_model=BookingOut)
+async def end_booking(booking_id: uuid.UUID, user: CurrentUser, db: DB, background: BackgroundTasks):
+    """Finish parking and leave.
+
+    Refuses while money is owed — the top-up is paid through the payments module
+    first, which is what marks `overstay_paid_at`. Keeping the charge out of this
+    endpoint keeps payment handling in one place.
+    """
+    booking = await service.get_for_user(db, booking_id, user)
+    if booking.renter_id != user.id:
+        raise Forbidden("This booking belongs to another account")
+    config = await get_config(db)
+    booking = await service.end_parking(db, booking, config)
+    await notifications.booking_completed(db, background, booking)
+    await db.commit()
+    await db.refresh(booking)
+    return await serializers.to_out(db, booking, user, config)
 
 
 @router.post("/{booking_id}/cancel", response_model=BookingOut)

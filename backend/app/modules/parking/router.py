@@ -7,8 +7,10 @@ from fastapi import APIRouter, Depends, Query, Request, UploadFile, status
 from app.core.deps import DB, CurrentUser, client_ip
 from app.core.errors import Forbidden
 from app.core.ratelimit import rate_limit
+from app.modules.parking import bays
 from app.modules.availability import crud as availability_crud
 from app.modules.availability import service as availability_service
+from app.modules.parking.schemas import BayActive, BayLayout, BayOut, BayRename
 from app.modules.availability.schemas import (
     AvailabilityOut,
     BlockIn,
@@ -219,6 +221,68 @@ async def reorder_photos(space_id: uuid.UUID, data: PhotoReorder, user: CurrentU
     await db.commit()
     await db.refresh(space)
     return space.photos
+
+
+# --------------------------------------------------------------------------- #
+# Bays
+# --------------------------------------------------------------------------- #
+@router.get("/{space_id}/bays", response_model=BayLayout)
+async def get_bays(
+    space_id: uuid.UUID,
+    db: DB,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+):
+    """The bay layout, and which bays are taken for a window if one is given.
+
+    This is an optimistic read used to draw the picker. The authority remains
+    the exclusion constraint, so a bay shown free can still lose a race — the
+    booking call is where that is settled.
+    """
+    space = await service.get_public(db, space_id)
+    layout = await bays.list_for_space(db, space.id)
+    taken: set[int] = set()
+    if start_at and end_at:
+        taken = await availability_service.taken_slots(db, space.id, start_at, end_at)
+    return BayLayout(
+        parking_space_id=space.id,
+        total_slots=max(space.total_slots, 1),
+        row_width=bays.ROW_WIDTH,
+        bays=[
+            BayOut(
+                slot_index=bay.slot_index,
+                label=bay.label,
+                row_index=bay.row_index,
+                col_index=bay.col_index,
+                is_active=bay.is_active,
+                taken=(bay.slot_index in taken) if (start_at and end_at) else None,
+            )
+            for bay in layout
+        ],
+    )
+
+
+@router.put("/{space_id}/bays", response_model=list[BayOut])
+async def rename_bays(space_id: uuid.UUID, data: BayRename, user: CurrentUser, db: DB):
+    """Set the names painted on the floor."""
+    provider = await provider_service.require_provider(db, user)
+    space = await service.get_owned(db, provider, space_id)
+    updated = await bays.rename(db, space, data.labels)
+    await db.commit()
+    return updated
+
+
+@router.post("/{space_id}/bays/{slot_index}/active", response_model=BayOut)
+async def set_bay_active(
+    space_id: uuid.UUID, slot_index: int, data: BayActive, user: CurrentUser, db: DB
+):
+    """Take a bay out of service without changing the layout."""
+    provider = await provider_service.require_provider(db, user)
+    space = await service.get_owned(db, provider, space_id)
+    bay = await bays.set_active(db, space, slot_index, data.is_active)
+    await db.commit()
+    await db.refresh(bay)
+    return bay
 
 
 # --------------------------------------------------------------------------- #

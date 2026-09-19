@@ -1,12 +1,21 @@
 /**
- * Leaflet map wrapper (PRD §21).
+ * MapLibre GL map wrapper (PRD §21).
  *
- * Leaflet is driven imperatively, so this component owns the map instance and
- * syncs markers when the props change. OpenStreetMap tiles need no API key,
- * which keeps the pilot free of another vendor dependency.
+ * The map is driven imperatively, so this component owns the map instance and
+ * syncs markers when the props change. Its props are deliberately identical to
+ * the Leaflet version this replaced, so callers did not have to change.
+ *
+ * Basemap selection, in order:
+ *   1. MapTiler vector tiles when VITE_MAPTILER_KEY is set — smooth zoom, a
+ *      light and a dark style, and labels that suit an Indian city.
+ *   2. OpenStreetMap raster tiles otherwise, so the app still renders a map with
+ *      no account and no key. CARTO was tried first and is NOT usable here: it
+ *      answers 200 but stamps "API KEY REQUIRED" across every tile.
+ * Both are wrapped in a MapLibre style object, so the rest of the component
+ * never learns which one it got.
  */
-import { useEffect, useRef } from "react";
-import L from "leaflet";
+import { useEffect, useRef, useState } from "react";
+import maplibregl, { type StyleSpecification } from "maplibre-gl";
 
 export interface MapMarker {
   id: string;
@@ -23,30 +32,83 @@ interface MapProps {
   center?: { latitude: number; longitude: number };
   zoom?: number;
   className?: string;
-  /** Lets the renter drop a pin — used by the listing form. */
+  /** Lets the provider drop a pin — used by the listing form. */
   onPick?: (latitude: number, longitude: number) => void;
   onMarkerClick?: (id: string) => void;
   fitToMarkers?: boolean;
 }
 
 const DEFAULT_CENTER = { latitude: 23.0225, longitude: 72.5714 }; // Ahmedabad
+const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY ?? "";
 
-function pinIcon(active: boolean, label?: string): L.DivIcon {
-  const background = active ? "#0f766e" : "#ffffff";
-  const color = active ? "#ffffff" : "#0f766e";
-  // A price label has no fixed width, so a numeric iconAnchor would clip it off
-  // centre. Anchoring at the point and centring with a transform always fits.
-  return L.divIcon({
-    className: "",
-    html: `<div style="
-      position:absolute;transform:translate(-50%,-50%);
-      background:${background};color:${color};border:2px solid #0f766e;
-      border-radius:999px;padding:3px 9px;font:600 12px/1.4 system-ui,sans-serif;
-      white-space:nowrap;box-shadow:0 1px 4px rgba(15,23,42,.35);
-    ">${label ?? "\u2022"}</div>`,
-    iconSize: [0, 0],
-    iconAnchor: [0, 0],
-  });
+const OSM_ATTRIBUTION =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+
+/**
+ * Keyless fallback. OSM publishes no dark tiles, so dark mode is handled by
+ * filtering the canvas in CSS — see [data-basemap="raster"] in styles.css.
+ */
+function rasterStyle(): StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      basemap: {
+        type: "raster",
+        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: OSM_ATTRIBUTION,
+      },
+    },
+    layers: [{ id: "basemap", type: "raster", source: "basemap" }],
+  };
+}
+
+function styleFor(dark: boolean): string | StyleSpecification {
+  if (!MAPTILER_KEY) return rasterStyle();
+  const name = dark ? "streets-v2-dark" : "streets-v2";
+  return `https://api.maptiler.com/maps/${name}/style.json?key=${MAPTILER_KEY}`;
+}
+
+/**
+ * MapLibre is WebGL-only and throws when a context cannot be created. That is
+ * not rare in this market — budget Android devices, GPU blocklists and locked
+ * down browsers all hit it — and an unhandled throw here blanks the whole page.
+ * Probe once so we can degrade to a useful panel instead.
+ */
+let webglOk: boolean | null = null;
+function hasWebGL(): boolean {
+  if (webglOk !== null) return webglOk;
+  try {
+    const canvas = document.createElement("canvas");
+    webglOk = Boolean(
+      canvas.getContext("webgl2") ||
+        canvas.getContext("webgl") ||
+        canvas.getContext("experimental-webgl"),
+    );
+  } catch {
+    webglOk = false;
+  }
+  return webglOk;
+}
+
+function prefersDark(): boolean {
+  const explicit = document.documentElement.getAttribute("data-theme");
+  if (explicit === "dark") return true;
+  if (explicit === "light") return false;
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
+}
+
+/** A price pill, or a plain pin when the caller gave no label. */
+function pinElement(marker: MapMarker): HTMLElement {
+  const el = document.createElement("button");
+  el.type = "button";
+  el.className = `map-pin${marker.active ? " map-pin--on" : ""}${
+    marker.label ? "" : " map-pin--dot"
+  }`;
+  if (marker.label) el.textContent = marker.label;
+  el.setAttribute("aria-label", marker.label ?? "Parking space");
+  return el;
 }
 
 export default function MapView({
@@ -59,70 +121,133 @@ export default function MapView({
   fitToMarkers = true,
 }: MapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const layerRef = useRef<L.LayerGroup | null>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const markersRef = useRef<maplibregl.Marker[]>([]);
+  const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const supported = hasWebGL();
+
+  // Callbacks live in refs so the map is built once and never torn down when a
+  // parent re-renders with a new closure.
   const onPickRef = useRef(onPick);
   const onMarkerClickRef = useRef(onMarkerClick);
   onPickRef.current = onPick;
   onMarkerClickRef.current = onMarkerClick;
 
-  // Create the map once.
+  // --- Create the map once. ------------------------------------------------ #
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    if (!containerRef.current || mapRef.current || !supported) return;
     const start = center ?? DEFAULT_CENTER;
-    const map = L.map(containerRef.current, { scrollWheelZoom: false }).setView(
-      [start.latitude, start.longitude],
-      zoom,
-    );
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 19,
-    }).addTo(map);
-    layerRef.current = L.layerGroup().addTo(map);
-    map.on("click", (event: L.LeafletMouseEvent) => {
-      onPickRef.current?.(event.latlng.lat, event.latlng.lng);
+    let map: maplibregl.Map;
+    try {
+      map = new maplibregl.Map({
+        container: containerRef.current,
+        style: styleFor(prefersDark()),
+        center: [start.longitude, start.latitude],
+        zoom,
+        attributionControl: { compact: true },
+        // Scroll should scroll the page; the user zooms with the controls or a
+        // pinch, which is what the Leaflet version did too.
+        scrollZoom: false,
+      });
+    } catch (error) {
+      // A context that fails at construction time is not recoverable.
+      console.warn("Map unavailable", error);
+      setFailed(true);
+      return;
+    }
+    map.on("error", (event) => console.warn("Map error", event?.error ?? event));
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    map.addControl(new maplibregl.GeolocateControl({ trackUserLocation: false }), "top-right");
+    map.on("click", (event) => {
+      onPickRef.current?.(event.lngLat.lat, event.lngLat.lng);
     });
+    map.on("load", () => setReady(true));
     mapRef.current = map;
-    // Leaflet mis-measures inside a container that was still laying out.
-    setTimeout(() => map.invalidateSize(), 120);
+
     return () => {
       map.remove();
       mapRef.current = null;
-      layerRef.current = null;
+      markersRef.current = [];
+      setReady(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-draw markers whenever they change.
+  // --- Follow the viewer's theme. ------------------------------------------ #
+  useEffect(() => {
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!media) return;
+    const apply = () => mapRef.current?.setStyle(styleFor(prefersDark()));
+    media.addEventListener("change", apply);
+    const observer = new MutationObserver(apply);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => {
+      media.removeEventListener("change", apply);
+      observer.disconnect();
+    };
+  }, []);
+
+  // --- Re-draw markers whenever they change. ------------------------------- #
   useEffect(() => {
     const map = mapRef.current;
-    const layer = layerRef.current;
-    if (!map || !layer) return;
-    layer.clearLayers();
-    for (const marker of markers) {
-      const pin = L.marker([marker.latitude, marker.longitude], {
-        icon: pinIcon(Boolean(marker.active), marker.label),
-      });
-      if (marker.popupHtml) pin.bindPopup(`<div class="map-popup">${marker.popupHtml}</div>`);
-      pin.on("click", () => onMarkerClickRef.current?.(marker.id));
-      pin.addTo(layer);
-    }
-    if (fitToMarkers && markers.length > 1) {
-      map.fitBounds(L.latLngBounds(markers.map((m) => [m.latitude, m.longitude] as [number, number])), {
-        padding: [40, 40],
-        maxZoom: 16,
-      });
-    } else if (markers.length === 1) {
-      map.setView([markers[0].latitude, markers[0].longitude], Math.max(map.getZoom(), 15));
-    }
-  }, [markers, fitToMarkers]);
+    if (!map || !ready) return;
 
-  // Follow an externally controlled centre (e.g. "use my location").
+    for (const existing of markersRef.current) existing.remove();
+    markersRef.current = [];
+
+    for (const marker of markers) {
+      const element = pinElement(marker);
+      element.addEventListener("click", (event) => {
+        event.stopPropagation();
+        onMarkerClickRef.current?.(marker.id);
+      });
+      const pin = new maplibregl.Marker({ element, anchor: "center" }).setLngLat([
+        marker.longitude,
+        marker.latitude,
+      ]);
+      if (marker.popupHtml) {
+        pin.setPopup(
+          new maplibregl.Popup({ offset: 18, closeButton: false, maxWidth: "260px" }).setHTML(
+            `<div class="map-popup">${marker.popupHtml}</div>`,
+          ),
+        );
+      }
+      pin.addTo(map);
+      markersRef.current.push(pin);
+    }
+
+    if (fitToMarkers && markers.length > 1) {
+      const bounds = new maplibregl.LngLatBounds();
+      for (const marker of markers) bounds.extend([marker.longitude, marker.latitude]);
+      map.fitBounds(bounds, { padding: 56, maxZoom: 16, duration: 400 });
+    } else if (markers.length === 1) {
+      map.easeTo({
+        center: [markers[0].longitude, markers[0].latitude],
+        zoom: Math.max(map.getZoom(), 15),
+        duration: 400,
+      });
+    }
+  }, [markers, fitToMarkers, ready]);
+
+  // --- Follow an externally controlled centre (e.g. "use my location"). ---- #
   useEffect(() => {
     if (mapRef.current && center) {
-      mapRef.current.setView([center.latitude, center.longitude], mapRef.current.getZoom());
+      mapRef.current.easeTo({ center: [center.longitude, center.latitude], duration: 400 });
     }
   }, [center?.latitude, center?.longitude]);
 
-  return <div ref={containerRef} className={className} />;
+  if (!supported || failed) {
+    return (
+      <div className={`${className} map--fallback`} role="note">
+        <p className="bold">Map unavailable</p>
+        <p className="small muted">
+          This browser cannot display the map, but everything else works — the list below has the
+          same {markers.length === 1 ? "place" : "places"}.
+        </p>
+      </div>
+    );
+  }
+
+  return <div ref={containerRef} className={className} data-basemap={MAPTILER_KEY ? "vector" : "raster"} />;
 }

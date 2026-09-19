@@ -13,6 +13,28 @@ interface AsyncState<T> {
  * Runs an async loader on mount and whenever `deps` change, cancelling the
  * in-flight request when they do so a slow response can't overwrite a fast one.
  */
+
+/**
+ * Turn any thrown value into an ApiError for display.
+ *
+ * Everything that was not an ApiError used to be reported as "Network error",
+ * which disguised genuine client-side faults as connectivity problems — a
+ * SubtleCrypto failure on a non-secure origin looked exactly like a dropped
+ * connection. A real network failure surfaces as a TypeError from fetch, so
+ * only that is called one.
+ */
+function toDisplayError(err: unknown): ApiError {
+  if (err instanceof ApiError) return err;
+  const message = err instanceof Error ? err.message : String(err);
+  const looksLikeFetchFailure =
+    err instanceof TypeError && /fetch|network|load failed/i.test(message);
+  if (looksLikeFetchFailure) {
+    return new ApiError(0, "NETWORK", "Could not reach the server. Check your connection.");
+  }
+  console.error("Unexpected client error", err);
+  return new ApiError(0, "CLIENT", message || "Something went wrong on this device.");
+}
+
 export function useAsync<T>(
   loader: (signal: AbortSignal) => Promise<T>,
   deps: unknown[] = [],
@@ -36,7 +58,7 @@ export function useAsync<T>(
       })
       .catch((err: unknown) => {
         if (!active || controller.signal.aborted) return;
-        setError(err instanceof ApiError ? err : new ApiError(0, "NETWORK", "Network error"));
+        setError(toDisplayError(err));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -66,7 +88,7 @@ export function useSubmit<Args extends unknown[], Result>(
       try {
         return await action(...args);
       } catch (err) {
-        setError(err instanceof ApiError ? err : new ApiError(0, "NETWORK", "Network error"));
+        setError(toDisplayError(err));
         return undefined;
       } finally {
         setPending(false);

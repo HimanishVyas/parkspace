@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import MapView from "../../components/Map";
+import ArrivalPanel from "../../components/ArrivalPanel";
+import OverstayPanel from "../../components/OverstayPanel";
+import MapView from "../../components/LazyMap";
 import QRCode from "../../components/QRCode";
 import { Alert, Badge, ErrorMessage, Field, Loading, Panel, Stars } from "../../components/ui";
 import { api } from "../../lib/api";
@@ -102,6 +104,7 @@ export default function BookingDetail() {
                   value={`${Number(data.quantity)} ${UNIT_PLURAL[data.unit]}`}
                 />
                 <Row label="Vehicle" value={`${data.vehicle_number} (${data.vehicle_type})`} />
+                {data.bay_label ? <Row label="Bay" value={data.bay_label} /> : null}
                 <Row
                   label="Location"
                   value={[data.parking_space.address_line, data.parking_space.landmark, data.parking_space.city]
@@ -195,6 +198,12 @@ export default function BookingDetail() {
           </div>
 
           <div className="stack search-layout__map">
+            <OverstayPanel booking={data} onFinished={() => booking.reload()} />
+
+            {data.parking_space.requires_arrival_code ? (
+              <ArrivalPanel booking={data} onCheckedIn={() => booking.reload()} />
+            ) : null}
+
             {confirmation.data && ["CONFIRMED", "ACTIVE", "COMPLETED"].includes(data.status) ? (
               <Panel title="Show on arrival">
                 <div className="stack" style={{ alignItems: "center" }}>

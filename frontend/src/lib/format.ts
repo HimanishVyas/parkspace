@@ -130,6 +130,8 @@ export function bookingBadge(status: BookingStatus): { label: string; tone: Badg
       return { label: "Confirmed", tone: "green" };
     case "ACTIVE":
       return { label: "In progress", tone: "teal" };
+    case "OVERSTAYING":
+      return { label: "Running over", tone: "amber" };
     case "COMPLETED":
       return { label: "Completed", tone: "blue" };
     case "CANCELLED":

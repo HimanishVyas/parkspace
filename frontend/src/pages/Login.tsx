@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ErrorMessage, Field } from "../components/ui";
 import { useAuth } from "../lib/auth";
+import { homeFor, portalFor } from "../lib/portal";
 import { useSubmit } from "../lib/hooks";
 
 export default function Login() {
@@ -14,8 +15,11 @@ export default function Login() {
   const from = (location.state as { from?: string } | null)?.from ?? "/";
   const { run, pending, error } = useSubmit(async () => {
     const user = await login(identifier.trim(), password);
-    // Admins land on their console; everyone else goes where they were headed.
-    navigate(from !== "/" ? from : user.role === "ADMIN" ? "/admin" : "/", { replace: true });
+    // Honour where they were headed; otherwise send them to their own portal
+    // rather than the marketing page. `login` resolves the provider profile
+    // before returning, so the role is already accurate here.
+    const home = homeFor(portalFor(user, null));
+    navigate(from !== "/" ? from : home, { replace: true });
   });
 
   return (

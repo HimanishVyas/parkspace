@@ -1,7 +1,10 @@
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import Layout from "./components/Layout";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import RenterShell from "./components/shells/RenterShell";
+import ProviderShell from "./components/shells/ProviderShell";
+import AdminShell from "./components/shells/AdminShell";
 import { Loading } from "./components/ui";
 import { useAuth } from "./lib/auth";
+import { homeFor, usePortal } from "./lib/portal";
 
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
@@ -33,8 +36,24 @@ import AdminReports from "./pages/admin/Reports";
 import AdminSettings from "./pages/admin/Settings";
 import AdminPayouts from "./pages/admin/Payouts";
 
-/** Sends signed-out visitors to login, remembering where they were headed. */
-function RequireAuth({ children, role }: { children: JSX.Element; role?: "PROVIDER" | "ADMIN" }) {
+/**
+ * "/" is the marketing page, which only means anything to a signed-out visitor.
+ * A signed-in account is sent to its own portal instead of a page selling it
+ * things it already has.
+ */
+function Home() {
+  const { loading } = useAuth();
+  const portal = usePortal();
+  if (loading) return <Loading />;
+  if (portal === "guest") return <Landing />;
+  return <Navigate to={homeFor(portal)} replace />;
+}
+
+/**
+ * Route guard, used as a layout route so a whole portal is protected once
+ * rather than every route repeating the wrapper.
+ */
+function RequireAuth({ role }: { role?: "PROVIDER" | "ADMIN" }) {
   const { user, provider, loading } = useAuth();
   const location = useLocation();
 
@@ -42,209 +61,61 @@ function RequireAuth({ children, role }: { children: JSX.Element; role?: "PROVID
   if (!user) return <Navigate to="/login" state={{ from: location.pathname + location.search }} replace />;
   if (role === "ADMIN" && user.role !== "ADMIN") return <Navigate to="/" replace />;
   if (role === "PROVIDER" && !provider) return <Navigate to="/list-your-space" replace />;
-  return children;
+  return <Outlet />;
 }
 
 export default function App() {
   return (
-    <Layout>
-      <Routes>
-        <Route path="/" element={<Landing />} />
+    <Routes>
+      {/* ---------- Renter portal: public pages and the renter's own area ---- */}
+      <Route element={<RenterShell />}>
+        <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/search" element={<Search />} />
         <Route path="/parking/:spaceId" element={<ListingDetail />} />
         <Route path="/list-your-space" element={<BecomeProvider />} />
 
-        <Route
-          path="/notifications"
-          element={
-            <RequireAuth>
-              <Notifications />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/profile"
-          element={
-            <RequireAuth>
-              <Profile />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/vehicles"
-          element={
-            <RequireAuth>
-              <Vehicles />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/bookings"
-          element={
-            <RequireAuth>
-              <Bookings />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/bookings/:bookingId"
-          element={
-            <RequireAuth>
-              <BookingDetail />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/bookings/:bookingId/pay"
-          element={
-            <RequireAuth>
-              <Checkout />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/bookings/:bookingId/report"
-          element={
-            <RequireAuth>
-              <ReportIssue />
-            </RequireAuth>
-          }
-        />
-
-        <Route
-          path="/provider"
-          element={
-            <RequireAuth role="PROVIDER">
-              <ProviderDashboard />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/provider/listings"
-          element={
-            <RequireAuth role="PROVIDER">
-              <ProviderListings />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/provider/listings/new"
-          element={
-            <RequireAuth role="PROVIDER">
-              <ListingForm />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/provider/listings/:spaceId/edit"
-          element={
-            <RequireAuth role="PROVIDER">
-              <ListingForm />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/provider/listings/:spaceId/availability"
-          element={
-            <RequireAuth role="PROVIDER">
-              <ListingAvailability />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/provider/bookings"
-          element={
-            <RequireAuth role="PROVIDER">
-              <ProviderBookings />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/provider/earnings"
-          element={
-            <RequireAuth role="PROVIDER">
-              <ProviderEarnings />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/provider/society"
-          element={
-            <RequireAuth role="PROVIDER">
-              <SocietyProfile />
-            </RequireAuth>
-          }
-        />
-
-        <Route
-          path="/admin"
-          element={
-            <RequireAuth role="ADMIN">
-              <AdminDashboard />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/admin/users"
-          element={
-            <RequireAuth role="ADMIN">
-              <AdminUsers />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/admin/providers"
-          element={
-            <RequireAuth role="ADMIN">
-              <AdminProviders />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/admin/listings"
-          element={
-            <RequireAuth role="ADMIN">
-              <AdminListings />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/admin/bookings"
-          element={
-            <RequireAuth role="ADMIN">
-              <AdminBookings />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/admin/reports"
-          element={
-            <RequireAuth role="ADMIN">
-              <AdminReports />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/admin/payouts"
-          element={
-            <RequireAuth role="ADMIN">
-              <AdminPayouts />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/admin/settings"
-          element={
-            <RequireAuth role="ADMIN">
-              <AdminSettings />
-            </RequireAuth>
-          }
-        />
+        <Route element={<RequireAuth />}>
+          <Route path="/notifications" element={<Notifications />} />
+          <Route path="/profile" element={<Profile />} />
+          <Route path="/vehicles" element={<Vehicles />} />
+          <Route path="/bookings" element={<Bookings />} />
+          <Route path="/bookings/:bookingId" element={<BookingDetail />} />
+          <Route path="/bookings/:bookingId/pay" element={<Checkout />} />
+          <Route path="/bookings/:bookingId/report" element={<ReportIssue />} />
+        </Route>
 
         <Route path="*" element={<NotFound />} />
-      </Routes>
-    </Layout>
+      </Route>
+
+      {/* ---------- Provider portal ------------------------------------------ */}
+      <Route element={<RequireAuth role="PROVIDER" />}>
+        <Route path="/provider" element={<ProviderShell />}>
+          <Route index element={<ProviderDashboard />} />
+          <Route path="listings" element={<ProviderListings />} />
+          <Route path="listings/new" element={<ListingForm />} />
+          <Route path="listings/:spaceId/edit" element={<ListingForm />} />
+          <Route path="listings/:spaceId/availability" element={<ListingAvailability />} />
+          <Route path="bookings" element={<ProviderBookings />} />
+          <Route path="earnings" element={<ProviderEarnings />} />
+          <Route path="society" element={<SocietyProfile />} />
+        </Route>
+      </Route>
+
+      {/* ---------- Admin portal --------------------------------------------- */}
+      <Route element={<RequireAuth role="ADMIN" />}>
+        <Route path="/admin" element={<AdminShell />}>
+          <Route index element={<AdminDashboard />} />
+          <Route path="users" element={<AdminUsers />} />
+          <Route path="providers" element={<AdminProviders />} />
+          <Route path="listings" element={<AdminListings />} />
+          <Route path="bookings" element={<AdminBookings />} />
+          <Route path="reports" element={<AdminReports />} />
+          <Route path="payouts" element={<AdminPayouts />} />
+          <Route path="settings" element={<AdminSettings />} />
+        </Route>
+      </Route>
+    </Routes>
   );
 }

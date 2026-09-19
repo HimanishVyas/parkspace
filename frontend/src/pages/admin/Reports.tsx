@@ -1,5 +1,4 @@
 import { useState } from "react";
-import AdminNav from "../../components/AdminNav";
 import { Badge, Empty, ErrorMessage, Field, Loading, Pagination } from "../../components/ui";
 import { api } from "../../lib/api";
 import { ISSUE_LABEL, dateTime } from "../../lib/format";
@@ -37,8 +36,7 @@ export default function Reports() {
 
   return (
     <main className="page page--wide">
-      <h1>Admin</h1>
-      <AdminNav />
+      <h1>Reports</h1>
 
       <div className="stack">
         <div className="row">

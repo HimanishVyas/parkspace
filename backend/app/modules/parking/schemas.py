@@ -44,6 +44,8 @@ class ParkingSpaceBase(BaseModel):
     access_instructions: str | None = Field(default=None, max_length=2000)
     total_slots: int = Field(default=1, ge=1, le=500)
     requires_approval: bool = False
+    # Renter must enter a code from the provider before parking (unattended spaces).
+    requires_arrival_code: bool = False
 
     @field_validator("vehicle_types")
     @classmethod
@@ -88,6 +90,7 @@ class ParkingSpaceUpdate(BaseModel):
     access_instructions: str | None = Field(default=None, max_length=2000)
     total_slots: int | None = Field(default=None, ge=1, le=500)
     requires_approval: bool | None = None
+    requires_arrival_code: bool | None = None
     prices: list[PriceIn] | None = Field(default=None, min_length=1)
 
 
@@ -129,6 +132,7 @@ class ParkingSpacePublic(BaseModel):
     longitude: float
     total_slots: int
     requires_approval: bool
+    requires_arrival_code: bool
     rating_average: Decimal | None
     rating_count: int
     prices: list[PriceOut]
@@ -177,3 +181,33 @@ class GeocodeOut(BaseModel):
     latitude: float
     longitude: float
     display_name: str
+
+
+class BayOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    slot_index: int
+    label: str
+    row_index: int
+    col_index: int
+    is_active: bool
+    # Whether this bay is free for the window that was asked about. None when no
+    # window was given, because then the question has no answer.
+    taken: bool | None = None
+
+
+class BayLayout(BaseModel):
+    parking_space_id: uuid.UUID
+    total_slots: int
+    row_width: int
+    bays: list[BayOut]
+
+
+class BayRename(BaseModel):
+    """Provider-supplied labels, keyed by slot index."""
+
+    labels: dict[int, str] = Field(min_length=1)
+
+
+class BayActive(BaseModel):
+    is_active: bool

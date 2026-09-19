@@ -1,5 +1,4 @@
 import { useState } from "react";
-import AdminNav from "../../components/AdminNav";
 import { Badge, Empty, ErrorMessage, Field, Loading, Panel } from "../../components/ui";
 import { api } from "../../lib/api";
 import { dateOnly, money } from "../../lib/format";
@@ -35,8 +34,7 @@ export default function Payouts() {
 
   return (
     <main className="page page--wide">
-      <h1>Admin</h1>
-      <AdminNav />
+      <h1>Payouts</h1>
 
       <div className="stack">
         <Panel title="Create a payout">

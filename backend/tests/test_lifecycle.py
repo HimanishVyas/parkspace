@@ -75,16 +75,43 @@ async def test_booking_activates_then_completes(db, provider, renter):
     assert counts["activated"] == 1
     assert (await renter.get(f"/bookings/{booking['id']}")).json()["status"] == "ACTIVE"
 
-    # ...and now that it has passed.
+    # ...and now that it has passed, within the grace period. A booking that
+    # runs further over than that becomes an overstay instead of completing for
+    # free — see test_overstay.py.
     await db.execute(
         update(Booking)
         .where(Booking.id == booking["id"])
-        .values(start_at=now - timedelta(hours=3), end_at=now - timedelta(hours=1))
+        .values(start_at=now - timedelta(hours=2), end_at=now - timedelta(minutes=2))
     )
     await db.commit()
     counts = await run_once(db)
     assert counts["completed"] == 1
     assert (await renter.get(f"/bookings/{booking['id']}")).json()["status"] == "COMPLETED"
+
+
+async def test_a_booking_left_running_past_grace_becomes_an_overstay(db, provider, renter):
+    """The lifecycle change that came with overstay billing: an ACTIVE booking
+    well past its end is no longer closed out for free."""
+    space = await create_listing(provider, rules=ALL_WEEK_FULL)
+    vehicle = await add_vehicle(renter, registration="GJ01LC0099")
+    booking = await _book(renter, space["id"], vehicle["id"])
+    await pay_for(renter, booking["id"])
+
+    now = utcnow()
+    await db.execute(
+        update(Booking)
+        .where(Booking.id == booking["id"])
+        .values(
+            status="ACTIVE",
+            start_at=now - timedelta(hours=3),
+            end_at=now - timedelta(hours=1),
+        )
+    )
+    await db.commit()
+    counts = await run_once(db)
+    assert counts["overstaying"] == 1
+    assert counts["completed"] == 0
+    assert (await renter.get(f"/bookings/{booking['id']}")).json()["status"] == "OVERSTAYING"
 
 
 async def test_completion_moves_money_into_earnings(db, provider, renter):
@@ -135,7 +162,13 @@ async def test_reminder_is_sent_once(db, provider, renter):
 
 
 async def test_maintenance_is_safe_to_run_on_an_empty_database(db):
-    assert await run_once(db) == {"expired": 0, "activated": 0, "completed": 0, "reminders": 0}
+    assert await run_once(db) == {
+        "expired": 0,
+        "activated": 0,
+        "overstaying": 0,
+        "completed": 0,
+        "reminders": 0,
+    }
 
 
 async def test_manual_approval_flow(db, provider, renter):

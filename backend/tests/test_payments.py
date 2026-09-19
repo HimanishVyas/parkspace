@@ -221,3 +221,37 @@ async def test_admin_cancelling_an_unpaid_booking_refunds_nothing(admin, provide
     cancelled = await admin.post(f"/admin/bookings/{booking['id']}/cancel", json={"reason": "Duplicate"})
     assert cancelled.status_code == 200
     assert Decimal(cancelled.json()["refund_amount"]) == Decimal("0.00")
+
+
+async def test_sandbox_complete_pays_without_client_side_crypto(provider, renter):
+    """The sandbox shortcut exists because SubtleCrypto is unavailable on a
+    non-secure origin, so the browser cannot sign the mock order itself."""
+    _, booking = await make_booking(provider, renter, start_hour=14, end_hour=16)
+    assert booking["status"] == "PENDING_PAYMENT"
+
+    response = await renter.post("/payments/sandbox/complete", json={"booking_id": booking["id"]})
+    assert response.status_code == 200, response.text
+    confirmed = response.json()
+    assert confirmed["status"] == "CONFIRMED"
+    assert confirmed["confirmed_at"] is not None
+    # Access details are released by payment, exactly as on the signed path.
+    assert confirmed["access_instructions"] is not None
+
+    payment = (await renter.get(f"/payments/booking/{booking['id']}")).json()
+    assert payment["status"] == "CAPTURED"
+
+
+async def test_sandbox_complete_rejects_someone_elses_booking(client, provider, renter):
+    _, booking = await make_booking(provider, renter, start_hour=17, end_hour=19)
+    intruder = await register(client, full_name="Nosy Neighbour")
+    response = await intruder.post("/payments/sandbox/complete", json={"booking_id": booking["id"]})
+    assert response.status_code in (403, 404), response.text
+
+
+async def test_sandbox_complete_is_idempotent(provider, renter):
+    _, booking = await make_booking(provider, renter, start_hour=9, end_hour=11)
+    first = await renter.post("/payments/sandbox/complete", json={"booking_id": booking["id"]})
+    assert first.status_code == 200
+    # A double tap on the pay button must not double-charge or error out.
+    second = await renter.post("/payments/sandbox/complete", json={"booking_id": booking["id"]})
+    assert second.status_code in (200, 409), second.text

@@ -5,7 +5,6 @@
  * fees and the cancellation policy can change without a deploy.
  */
 import { useEffect, useState } from "react";
-import AdminNav from "../../components/AdminNav";
 import { Alert, ErrorMessage, Field, Loading, Panel } from "../../components/ui";
 import { api } from "../../lib/api";
 import { useAsync, useSubmit } from "../../lib/hooks";
@@ -44,8 +43,7 @@ export default function Settings() {
 
   return (
     <main className="page page--wide">
-      <h1>Admin</h1>
-      <AdminNav />
+      <h1>Settings</h1>
 
       <div className="stack">
         <ErrorMessage error={error} />

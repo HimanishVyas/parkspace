@@ -42,6 +42,10 @@ class BookingCreate(BaseModel):
     end_at: datetime | None = None
     quantity: int | None = Field(default=None, ge=1, le=365)
     renter_notes: str | None = Field(default=None, max_length=1000)
+    # The bay the renter picked. Omitted means "any" and the server assigns the
+    # lowest free one, exactly as before. A named bay that is taken FAILS rather
+    # than silently moving them somewhere else.
+    slot_index: int | None = Field(default=None, ge=0, le=499)
 
 
 class BookingCancel(BaseModel):
@@ -64,6 +68,8 @@ class BookingSpaceSummary(BaseModel):
     latitude: float
     longitude: float
     photo_url: str | None = None
+    # Drives the check-in panel on the booking page.
+    requires_arrival_code: bool = False
 
 
 class BookingPartyOut(BaseModel):
@@ -97,6 +103,8 @@ class BookingOut(BaseModel):
     currency: str
     vehicle_number: str
     vehicle_type: VehicleType
+    # What is painted on the floor, when the space has named bays.
+    bay_label: str | None = None
     renter_notes: str | None
     hold_expires_at: datetime | None
     confirmed_at: datetime | None
@@ -109,6 +117,9 @@ class BookingOut(BaseModel):
     renter: BookingPartyOut | None = None
     # What the provider actually earns; omitted from the renter's view.
     provider_earning: Decimal | None = None
+    overstay_minutes: int = 0
+    overstay_amount: Decimal = Decimal("0")
+    overstay_paid_at: datetime | None = None
     can_cancel: bool = False
     refund_if_cancelled_now: Decimal | None = None
 
@@ -142,3 +153,62 @@ class BookingConfirmation(BaseModel):
     currency: str
     parking_instructions: str | None
     qr_payload: str
+
+
+class ArrivalAnnounce(BaseModel):
+    """Optionally carries the renter's position, so the server can check they
+    are actually at the space. Omitted when the browser denies geolocation —
+    which it always does on a non-secure origin — and the check is then skipped.
+    """
+
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+
+
+class ArrivalVerify(BaseModel):
+    code: str = Field(min_length=4, max_length=10)
+
+
+class ArrivalState(BaseModel):
+    booking_id: uuid.UUID
+    status: BookingStatus
+    announced: bool
+    verified: bool
+    expired: bool
+    expires_at: datetime | None
+    attempts_left: int | None
+    waiting_minutes: float | None
+    escalate: bool
+    # Populated only on the provider's view of this booking.
+    code: str | None
+
+
+class WaitingArrival(BaseModel):
+    """A renter at a gate, from the provider's side. Carries the code, because
+    reading it out is the entire job of this screen."""
+
+    booking_id: uuid.UUID
+    reference: str
+    space_title: str
+    renter_name: str
+    renter_phone: str | None
+    vehicle_number: str
+    code: str
+    waiting_minutes: float
+    expires_at: datetime
+
+
+class OverstayQuote(BaseModel):
+    booking_id: uuid.UUID
+    status: BookingStatus
+    overstaying: bool
+    grace_ends_at: datetime
+    overstay_minutes: int
+    overstay_amount: Decimal
+    amount_due: Decimal
+    paid: bool
+    # The meter has hit its cap and stopped accruing.
+    meter_capped: bool
+    meter_stops_at: datetime
+    hourly_rate: Decimal
+    currency: str

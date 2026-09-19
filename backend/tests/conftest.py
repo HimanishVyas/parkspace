@@ -71,10 +71,15 @@ async def clean_tables(database):
         await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def db():
     async with SessionLocal() as session:
-        yield session
+        try:
+            yield session
+        finally:
+            # A test that read rows without committing leaves a transaction
+            # open, and closing that across the client's event loop raises.
+            await session.rollback()
 
 
 @pytest_asyncio.fixture

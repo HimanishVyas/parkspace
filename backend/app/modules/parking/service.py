@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.modules.availability import service as availability_service
 from app.modules.parking.location import MAX_RADIUS_KM, distance_km_expression, within_bounding_box
+from app.modules.parking import bays
 from app.modules.parking.models import (
     ListingStatus,
     ParkingPhoto,
@@ -71,6 +72,9 @@ async def create(db: AsyncSession, provider: Provider, data: ParkingSpaceCreate)
     )
     db.add(space)
     await db.flush()
+    # Every space gets a bay per slot from the start, so the picker has
+    # something to draw and the provider has labels to rename.
+    await bays.sync_for_space(db, space)
     await db.refresh(space)
     return space
 
@@ -146,6 +150,8 @@ async def update(db: AsyncSession, space: ParkingSpace, data: ParkingSpaceUpdate
     if data.prices is not None:
         await _replace_prices(db, space, data.prices)
     await db.flush()
+    if "total_slots" in changes and changes["total_slots"] is not None:
+        await bays.sync_for_space(db, space)
     await db.refresh(space)
     return space
 

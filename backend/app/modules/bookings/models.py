@@ -13,6 +13,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import TSTZRANGE, UUID, ExcludeConstraint
@@ -30,6 +31,8 @@ class BookingStatus(str, enum.Enum):
     PENDING_APPROVAL = "PENDING_APPROVAL"
     CONFIRMED = "CONFIRMED"
     ACTIVE = "ACTIVE"
+    # Past its end time with the car still in the bay and a top-up owed.
+    OVERSTAYING = "OVERSTAYING"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
     EXPIRED = "EXPIRED"
@@ -44,6 +47,9 @@ BLOCKING_STATUSES: tuple[BookingStatus, ...] = (
     BookingStatus.PENDING_APPROVAL,
     BookingStatus.CONFIRMED,
     BookingStatus.ACTIVE,
+    # An overstaying car is physically in the bay. If this were left out, the
+    # next renter could book a space with a vehicle still sitting in it.
+    BookingStatus.OVERSTAYING,
     BookingStatus.DISPUTED,
 )
 
@@ -116,6 +122,12 @@ class Booking(UUIDPkMixin, TimestampMixin, Base):
         TSTZRANGE, Computed("tstzrange(start_at, end_at, '[)')", persisted=True)
     )
 
+    # --- Overstay. Frozen onto the booking as it accrues, so a later rate
+    # change never rewrites what somebody already owed. ---
+    overstay_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    overstay_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    overstay_paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     unit: Mapped[PricingUnit] = mapped_column(str_enum(PricingUnit))
     # Billable units (hours, days or months) the price was computed from.
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 2))
@@ -154,3 +166,37 @@ class Booking(UUIDPkMixin, TimestampMixin, Base):
     @property
     def is_blocking(self) -> bool:
         return self.status in BLOCKING_STATUSES
+
+
+class ArrivalCode(UUIDPkMixin, Base):
+    """A one-time code the provider reads out to a renter standing at the gate.
+
+    The code is stored in the clear on purpose: the provider has to be able to
+    re-read it if they reopen the app, so it cannot be a one-way hash. It is a
+    six-digit value that lives for minutes, burns after a handful of wrong
+    guesses, and grants nothing beyond flipping one booking to ACTIVE — so the
+    exposure is small and bounded. It is deliberately NOT the booking reference,
+    which appears in emails and dashboards and would therefore be guessable.
+    """
+
+    __tablename__ = "arrival_codes"
+    __table_args__ = (
+        # One live code per booking; re-requesting replaces the row.
+        Index("uq_arrival_codes_booking", "booking_id", unique=True),
+    )
+
+    booking_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("bookings.id", ondelete="CASCADE"), index=True
+    )
+    code: Mapped[str] = mapped_column(String(10))
+    # Set when the renter announced arrival, so the provider sees how long they
+    # have been waiting and support can see who was left standing there.
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Where the renter said they were, for disputes about who was actually there.
+    latitude: Mapped[float | None] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[float | None] = mapped_column(Numeric(9, 6))
+
+    booking: Mapped["Booking"] = relationship()

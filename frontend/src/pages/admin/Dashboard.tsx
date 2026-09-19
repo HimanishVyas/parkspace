@@ -1,5 +1,4 @@
 import { Link } from "react-router-dom";
-import AdminNav from "../../components/AdminNav";
 import { Alert, ErrorMessage, Loading, Panel, Stat } from "../../components/ui";
 import { api } from "../../lib/api";
 import { money } from "../../lib/format";
@@ -14,8 +13,7 @@ export default function Dashboard() {
 
   return (
     <main className="page page--wide">
-      <h1>Admin</h1>
-      <AdminNav />
+      <h1>Overview</h1>
       <ErrorMessage error={error} />
 
       {loading ? (

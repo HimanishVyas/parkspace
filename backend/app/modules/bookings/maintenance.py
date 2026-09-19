@@ -10,11 +10,11 @@ is moving out of, so a missed tick or an overlapping run changes nothing.
 import logging
 from datetime import timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import utcnow
-from app.modules.bookings import notifications
+from app.modules.bookings import notifications, overstay
 from app.modules.bookings.models import Booking, BookingStatus
 from app.modules.notifications.service import deliver_email
 from app.modules.settings.schemas import PlatformConfig
@@ -40,26 +40,80 @@ async def expire_holds(db: AsyncSession) -> int:
 
 
 async def activate_started(db: AsyncSession) -> int:
+    """Flip confirmed bookings to ACTIVE once their window opens.
+
+    Listings that require an arrival code are excluded: on those, becoming
+    ACTIVE is the *result* of the renter proving they are at the gate, so
+    activating them on a timer would bypass the check entirely. They are left
+    CONFIRMED until verified, and `complete_finished` still closes them out so
+    an unverified booking cannot hang around forever.
+    """
+    from app.modules.parking.models import ParkingSpace
+
     now = utcnow()
+    gated = select(ParkingSpace.id).where(ParkingSpace.requires_arrival_code.is_(True))
     result = await db.execute(
         update(Booking)
-        .where(Booking.status == BookingStatus.CONFIRMED, Booking.start_at <= now, Booking.end_at > now)
+        .where(
+            Booking.status == BookingStatus.CONFIRMED,
+            Booking.start_at <= now,
+            Booking.end_at > now,
+            Booking.parking_space_id.not_in(gated),
+        )
         .values(status=BookingStatus.ACTIVE)
     )
     return result.rowcount or 0
 
 
-async def complete_finished(db: AsyncSession) -> list[Booking]:
-    """Close out bookings whose window has passed. Confirmed-but-never-activated
-    bookings are included, so a missed tick can't strand one."""
+async def start_overstays(db: AsyncSession, config: PlatformConfig) -> list[Booking]:
+    """Move bookings that ran past their grace period onto the meter.
+
+    Only ACTIVE bookings — someone actually parked. A CONFIRMED booking whose
+    window passed without a check-in is handled by `complete_finished`, because
+    there is no evidence anybody turned up and billing them would be wrong.
+    """
     now = utcnow()
+    cutoff = now - timedelta(minutes=config.overstay_grace_minutes)
+    rows = await db.scalars(
+        select(Booking).where(Booking.status == BookingStatus.ACTIVE, Booking.end_at <= cutoff)
+    )
+    started = list(rows.all())
+    for booking in started:
+        booking.status = BookingStatus.OVERSTAYING
+        overstay.freeze(booking, config, now)
+    return started
+
+
+async def complete_finished(db: AsyncSession, config: PlatformConfig) -> list[Booking]:
+    """Close out bookings whose window has passed.
+
+    Three groups end here:
+      - CONFIRMED but never started: nobody turned up, nothing to bill.
+      - ACTIVE but still inside the grace period: they left on time enough.
+      - OVERSTAYING past the meter cap: the meter has stopped, so the bay is
+        released and whatever accrued stays on the booking as owed. Holding the
+        bay indefinitely for an abandoned car helps nobody.
+    """
+    now = utcnow()
+    grace_cutoff = now - timedelta(minutes=config.overstay_grace_minutes)
+    capped = now - timedelta(hours=config.overstay_max_hours)
     rows = await db.scalars(
         select(Booking).where(
-            Booking.status.in_([BookingStatus.ACTIVE, BookingStatus.CONFIRMED]), Booking.end_at <= now
+            or_(
+                and_(
+                    Booking.status.in_([BookingStatus.ACTIVE, BookingStatus.CONFIRMED]),
+                    Booking.end_at <= now,
+                    Booking.end_at > grace_cutoff,
+                ),
+                and_(Booking.status == BookingStatus.CONFIRMED, Booking.end_at <= grace_cutoff),
+                and_(Booking.status == BookingStatus.OVERSTAYING, Booking.end_at <= capped),
+            )
         )
     )
     finished = list(rows.all())
     for booking in finished:
+        if booking.status == BookingStatus.OVERSTAYING:
+            overstay.freeze(booking, config, now)
         booking.status = BookingStatus.COMPLETED
         booking.completed_at = now
     return finished
@@ -89,10 +143,17 @@ async def run_once(db: AsyncSession) -> dict[str, int]:
     config = await get_config(db)
     expired = await expire_holds(db)
     activated = await activate_started(db)
-    completed = await complete_finished(db)
+    # Order matters: a booking must go onto the meter before the completion
+    # sweep looks at it, or a late renter would be closed out for free.
+    overstaying = await start_overstays(db, config)
+    completed = await complete_finished(db, config)
     reminders = await due_reminders(db, config)
 
     pending: list[_PendingEmail] = []
+    for booking in overstaying:
+        note = await _queue(db, booking, notifications.overstay_started)
+        if note:
+            pending.append(note)
     for booking in completed:
         note = await _queue(db, booking, notifications.booking_completed)
         if note:
@@ -111,6 +172,7 @@ async def run_once(db: AsyncSession) -> dict[str, int]:
     return {
         "expired": expired,
         "activated": activated,
+        "overstaying": len(overstaying),
         "completed": len(completed),
         "reminders": len(reminders),
     }

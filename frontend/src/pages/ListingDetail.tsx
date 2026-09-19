@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import MapView from "../components/Map";
-import { Alert, Empty, ErrorMessage, Field, Loading, Panel, Stars } from "../components/ui";
+import BayPicker from "../components/BayPicker";
+import MapView from "../components/LazyMap";
+import {
+  Alert,
+  Empty,
+  ErrorMessage,
+  Field,
+  Loading,
+  Panel,
+  Stars,
+} from "../components/ui";
 import { api } from "../lib/api";
 import {
   PARKING_TYPE_LABEL,
@@ -25,7 +34,15 @@ import type {
   Vehicle,
 } from "../lib/types";
 
-const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAY_NAMES = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
 
 /** Collapses a week of rules into readable lines like "Mon–Fri 8:00 am – 8:00 pm". */
 function describeSchedule(rules: AvailabilityRule[]): string[] {
@@ -46,7 +63,8 @@ function describeSchedule(rules: AvailabilityRule[]): string[] {
   let runStart: number | null = null;
   for (let day = 0; day <= 7; day++) {
     const current: string | undefined = byDay.get(day);
-    const previous: string | undefined = runStart !== null ? byDay.get(runStart) : undefined;
+    const previous: string | undefined =
+      runStart !== null ? byDay.get(runStart) : undefined;
     if (runStart === null) {
       if (current) runStart = day;
       continue;
@@ -69,7 +87,8 @@ export default function ListingDetail() {
   const { user } = useAuth();
 
   const space = useAsync(
-    (signal) => api.get<ParkingSpacePublic>(`/parking/${spaceId}`, undefined, signal),
+    (signal) =>
+      api.get<ParkingSpacePublic>(`/parking/${spaceId}`, undefined, signal),
     [spaceId],
   );
   const availability = useAsync(
@@ -82,11 +101,15 @@ export default function ListingDetail() {
     [spaceId],
   );
   const reviews = useAsync(
-    (signal) => api.get<ReviewSummary>(`/reviews/space/${spaceId}`, { limit: 5 }, signal),
+    (signal) =>
+      api.get<ReviewSummary>(`/reviews/space/${spaceId}`, { limit: 5 }, signal),
     [spaceId],
   );
   const vehicles = useAsync(
-    (signal) => (user ? api.get<Vehicle[]>("/vehicles", undefined, signal) : Promise.resolve([])),
+    (signal) =>
+      user
+        ? api.get<Vehicle[]>("/vehicles", undefined, signal)
+        : Promise.resolve([]),
     [user?.id],
   );
 
@@ -95,6 +118,8 @@ export default function ListingDetail() {
   const [startAt, setStartAt] = useState("");
   const [quantity, setQuantity] = useState(2);
   const [vehicleId, setVehicleId] = useState("");
+  // null means "any bay" — the server assigns one, as it always did.
+  const [slotIndex, setSlotIndex] = useState<number | null>(null);
   const [notes, setNotes] = useState("");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
@@ -109,7 +134,9 @@ export default function ListingDetail() {
   }, [listing?.id]);
 
   useEffect(() => {
-    const defaultVehicle = vehicles.data?.find((vehicle) => vehicle.is_default) ?? vehicles.data?.[0];
+    const defaultVehicle =
+      vehicles.data?.find((vehicle) => vehicle.is_default) ??
+      vehicles.data?.[0];
     if (defaultVehicle && !vehicleId) setVehicleId(defaultVehicle.id);
   }, [vehicles.data, vehicleId]);
 
@@ -133,7 +160,9 @@ export default function ListingDetail() {
       } catch (error) {
         if (active) {
           setQuote(null);
-          setQuoteError(error instanceof Error ? error.message : "Could not price that");
+          setQuoteError(
+            error instanceof Error ? error.message : "Could not price that",
+          );
         }
       }
     }, 300);
@@ -151,6 +180,7 @@ export default function ListingDetail() {
       unit,
       start_at: new Date(startAt).toISOString(),
       quantity,
+      slot_index: slotIndex ?? undefined,
       renter_notes: notes.trim() || undefined,
     });
     navigate(
@@ -194,7 +224,10 @@ export default function ListingDetail() {
             <div className="gallery">
               <div className="gallery__main">
                 {photos.length > 0 ? (
-                  <img src={photos[photoIndex]?.url} alt={photos[photoIndex]?.caption ?? listing.title} />
+                  <img
+                    src={photos[photoIndex]?.url}
+                    alt={photos[photoIndex]?.caption ?? listing.title}
+                  />
                 ) : (
                   <div
                     style={{
@@ -227,8 +260,13 @@ export default function ListingDetail() {
             </div>
 
             <div>
-              <div className="row" style={{ gap: "0.4rem", marginBottom: "0.4rem" }}>
-                <span className="badge badge--teal">{PARKING_TYPE_LABEL[listing.parking_type]}</span>
+              <div
+                className="row"
+                style={{ gap: "0.4rem", marginBottom: "0.4rem" }}
+              >
+                <span className="badge badge--teal">
+                  {PARKING_TYPE_LABEL[listing.parking_type]}
+                </span>
                 {listing.vehicle_types.map((type) => (
                   <span className="badge" key={type}>
                     {VEHICLE_LABEL[type]}
@@ -240,15 +278,24 @@ export default function ListingDetail() {
               </div>
               <h1>{listing.title}</h1>
               <p className="muted" style={{ marginBottom: "0.35rem" }}>
-                {[listing.address_line, listing.landmark, listing.city].filter(Boolean).join(", ")}
-                {listing.distance_km !== null ? ` · ${listing.distance_km.toFixed(1)} km away` : ""}
+                {[listing.address_line, listing.landmark, listing.city]
+                  .filter(Boolean)
+                  .join(", ")}
+                {listing.distance_km !== null
+                  ? ` · ${listing.distance_km.toFixed(1)} km away`
+                  : ""}
               </p>
-              <Stars rating={listing.rating_average} count={listing.rating_count} />
+              <Stars
+                rating={listing.rating_average}
+                count={listing.rating_count}
+              />
             </div>
 
             {listing.description ? (
               <Panel title="About this space">
-                <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{listing.description}</p>
+                <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                  {listing.description}
+                </p>
               </Panel>
             ) : null}
 
@@ -256,7 +303,10 @@ export default function ListingDetail() {
               {availability.loading ? (
                 <Loading />
               ) : (
-                <ul className="stack stack--sm" style={{ margin: 0, paddingLeft: "1.1rem" }}>
+                <ul
+                  className="stack stack--sm"
+                  style={{ margin: 0, paddingLeft: "1.1rem" }}
+                >
                   {schedule.map((line) => (
                     <li key={line} className="small">
                       {line}
@@ -264,8 +314,12 @@ export default function ListingDetail() {
                   ))}
                 </ul>
               )}
-              <p className="tiny muted" style={{ marginTop: "0.75rem", marginBottom: 0 }}>
-                Times shown are local. Exact availability is confirmed when you pick your dates.
+              <p
+                className="tiny muted"
+                style={{ marginTop: "0.75rem", marginBottom: 0 }}
+              >
+                Times shown are local. Exact availability is confirmed when you
+                pick your dates.
               </p>
             </Panel>
 
@@ -280,11 +334,18 @@ export default function ListingDetail() {
                     label: listing.title,
                   },
                 ]}
-                center={{ latitude: listing.latitude, longitude: listing.longitude }}
+                center={{
+                  latitude: listing.latitude,
+                  longitude: listing.longitude,
+                }}
                 zoom={16}
               />
-              <p className="tiny muted" style={{ marginTop: "0.6rem", marginBottom: 0 }}>
-                Exact access instructions are shared once your booking is confirmed.
+              <p
+                className="tiny muted"
+                style={{ marginTop: "0.6rem", marginBottom: 0 }}
+              >
+                Exact access instructions are shared once your booking is
+                confirmed.
               </p>
             </Panel>
 
@@ -293,9 +354,12 @@ export default function ListingDetail() {
                 <div>
                   <div className="bold">{listing.provider.display_name}</div>
                   <div className="small muted">
-                    {listing.provider.provider_type === "SOCIETY" ? "Society / organisation" : "Individual host"}
+                    {listing.provider.provider_type === "SOCIETY"
+                      ? "Society / organisation"
+                      : "Individual host"}
                     {" · "}
-                    Member since {new Date(listing.provider.member_since).getFullYear()}
+                    Member since{" "}
+                    {new Date(listing.provider.member_since).getFullYear()}
                   </div>
                 </div>
                 <div className="spacer" />
@@ -305,12 +369,15 @@ export default function ListingDetail() {
               </div>
             </Panel>
 
-            <Panel title={`Reviews${reviews.data?.count ? ` (${reviews.data.count})` : ""}`}>
+            <Panel
+              title={`Reviews${reviews.data?.count ? ` (${reviews.data.count})` : ""}`}
+            >
               {reviews.loading ? (
                 <Loading />
               ) : !reviews.data?.items.length ? (
                 <p className="small muted" style={{ margin: 0 }}>
-                  No reviews yet. Ratings appear here once renters complete a booking.
+                  No reviews yet. Ratings appear here once renters complete a
+                  booking.
                 </p>
               ) : (
                 <div className="stack">
@@ -318,7 +385,9 @@ export default function ListingDetail() {
                     <div key={review.id} className="stack stack--sm">
                       <div className="row" style={{ gap: "0.5rem" }}>
                         <Stars rating={review.rating} />
-                        <span className="small muted">{review.author_name}</span>
+                        <span className="small muted">
+                          {review.author_name}
+                        </span>
                       </div>
                       {review.comment ? (
                         <p className="small" style={{ margin: 0 }}>
@@ -338,7 +407,10 @@ export default function ListingDetail() {
               title={
                 <div>
                   <div style={{ fontSize: "1.35rem", fontWeight: 700 }}>
-                    {money(listing.prices.find((price) => price.unit === unit)?.amount)}{" "}
+                    {money(
+                      listing.prices.find((price) => price.unit === unit)
+                        ?.amount,
+                    )}{" "}
                     <span className="small muted">/ {UNIT_LABEL[unit]}</span>
                   </div>
                 </div>
@@ -360,12 +432,20 @@ export default function ListingDetail() {
 
                 <Field
                   label={unit === "HOURLY" ? "Starts at" : "Starts on"}
-                  hint={unit !== "HOURLY" ? "Daily and monthly bookings start at midnight." : undefined}
+                  hint={
+                    unit !== "HOURLY"
+                      ? "Daily and monthly bookings start at midnight."
+                      : undefined
+                  }
                 >
                   <input
                     type={unit === "HOURLY" ? "datetime-local" : "date"}
                     value={unit === "HOURLY" ? startAt : startAt.slice(0, 10)}
-                    min={unit === "HOURLY" ? toLocalInput(new Date()) : new Date().toISOString().slice(0, 10)}
+                    min={
+                      unit === "HOURLY"
+                        ? toLocalInput(new Date())
+                        : new Date().toISOString().slice(0, 10)
+                    }
                     onChange={(event) => {
                       const value = event.target.value;
                       setStartAt(unit === "HOURLY" ? value : `${value}T00:00`);
@@ -379,27 +459,53 @@ export default function ListingDetail() {
                     min={1}
                     max={unit === "HOURLY" ? 24 : unit === "DAILY" ? 60 : 12}
                     value={quantity}
-                    onChange={(event) => setQuantity(Math.max(1, Number(event.target.value)))}
+                    onChange={(event) =>
+                      setQuantity(Math.max(1, Number(event.target.value)))
+                    }
                   />
                 </Field>
 
                 {user ? (
                   vehicles.data && vehicles.data.length > 0 ? (
-                    <Field label="Vehicle" hint="The registration number appears on your booking.">
-                      <select value={vehicleId} onChange={(event) => setVehicleId(event.target.value)}>
-                        {vehicles.data
-                          .filter((vehicle) => listing.vehicle_types.includes(vehicle.vehicle_type))
-                          .map((vehicle) => (
-                            <option key={vehicle.id} value={vehicle.id}>
-                              {vehicle.registration_number} · {VEHICLE_LABEL[vehicle.vehicle_type]}
-                              {vehicle.make_model ? ` · ${vehicle.make_model}` : ""}
-                            </option>
-                          ))}
-                      </select>
-                    </Field>
+                    <>
+                      <BayPicker
+                        spaceId={listing.id}
+                        startAt={startAt || null}
+                        endAt={quote?.end_at ?? null}
+                        value={slotIndex}
+                        onChange={setSlotIndex}
+                      />
+
+                      <Field
+                        label="Vehicle"
+                        hint="The registration number appears on your booking."
+                      >
+                        <select
+                          value={vehicleId}
+                          onChange={(event) => setVehicleId(event.target.value)}
+                        >
+                          {vehicles.data
+                            .filter((vehicle) =>
+                              listing.vehicle_types.includes(
+                                vehicle.vehicle_type,
+                              ),
+                            )
+                            .map((vehicle) => (
+                              <option key={vehicle.id} value={vehicle.id}>
+                                {vehicle.registration_number} ·{" "}
+                                {VEHICLE_LABEL[vehicle.vehicle_type]}
+                                {vehicle.make_model
+                                  ? ` · ${vehicle.make_model}`
+                                  : ""}
+                              </option>
+                            ))}
+                        </select>
+                      </Field>
+                    </>
                   ) : (
                     <Alert kind="info">
-                      Add a vehicle before booking. <Link to="/vehicles">Add a vehicle</Link>
+                      Add a vehicle before booking.{" "}
+                      <Link to="/vehicles">Add a vehicle</Link>
                     </Alert>
                   )
                 ) : null}
@@ -419,26 +525,38 @@ export default function ListingDetail() {
                 {quote ? (
                   <div className="stack stack--sm">
                     {!quote.available ? (
-                      <Alert kind="warn">{quote.unavailable_reason ?? "Not available for those times"}</Alert>
+                      <Alert kind="warn">
+                        {quote.unavailable_reason ??
+                          "Not available for those times"}
+                      </Alert>
                     ) : null}
                     <div>
                       <div className="summary__line">
                         <span>
-                          {money(quote.unit_price)} × {Number(quote.quantity)} {UNIT_PLURAL[quote.unit]}
+                          {money(quote.unit_price)} × {Number(quote.quantity)}{" "}
+                          {UNIT_PLURAL[quote.unit]}
                         </span>
-                        <span className="numeric">{money(quote.base_amount)}</span>
+                        <span className="numeric">
+                          {money(quote.base_amount)}
+                        </span>
                       </div>
                       <div className="summary__line">
                         <span className="muted">Platform fee</span>
-                        <span className="numeric muted">{money(quote.platform_fee)}</span>
+                        <span className="numeric muted">
+                          {money(quote.platform_fee)}
+                        </span>
                       </div>
                       <div className="summary__line">
                         <span className="muted">Taxes</span>
-                        <span className="numeric muted">{money(quote.tax_amount)}</span>
+                        <span className="numeric muted">
+                          {money(quote.tax_amount)}
+                        </span>
                       </div>
                       <div className="summary__total">
                         <span>Total</span>
-                        <span className="numeric">{money(quote.total_amount)}</span>
+                        <span className="numeric">
+                          {money(quote.total_amount)}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -453,10 +571,18 @@ export default function ListingDetail() {
                     disabled={!canBook || book.pending}
                     onClick={() => void book.run()}
                   >
-                    {book.pending ? "Booking…" : listing.requires_approval ? "Request booking" : "Book parking"}
+                    {book.pending
+                      ? "Booking…"
+                      : listing.requires_approval
+                        ? "Request booking"
+                        : "Book parking"}
                   </button>
                 ) : (
-                  <Link to="/login" state={{ from: `/parking/${listing.id}` }} className="btn btn--block btn--lg">
+                  <Link
+                    to="/login"
+                    state={{ from: `/parking/${listing.id}` }}
+                    className="btn btn--block btn--lg"
+                  >
                     Sign in to book
                   </Link>
                 )}

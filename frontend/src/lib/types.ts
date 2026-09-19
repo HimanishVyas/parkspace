@@ -15,6 +15,7 @@ export type BookingStatus =
   | "PENDING_APPROVAL"
   | "CONFIRMED"
   | "ACTIVE"
+  | "OVERSTAYING"
   | "COMPLETED"
   | "CANCELLED"
   | "EXPIRED"
@@ -124,6 +125,7 @@ export interface ParkingSpace {
   access_instructions: string | null;
   total_slots: number;
   requires_approval: boolean;
+  requires_arrival_code: boolean;
   status: ListingStatus;
   rejection_reason: string | null;
   authority_confirmed: boolean;
@@ -150,6 +152,7 @@ export interface ParkingSpacePublic {
   longitude: number;
   total_slots: number;
   requires_approval: boolean;
+  requires_arrival_code: boolean;
   rating_average: string | null;
   rating_count: number;
   prices: Price[];
@@ -223,6 +226,8 @@ export interface Quote {
 }
 
 export interface BookingSpaceSummary {
+  /** Drives the check-in panel. */
+  requires_arrival_code?: boolean;
   id: string;
   title: string;
   parking_type: ParkingType;
@@ -253,6 +258,10 @@ export interface Booking {
   currency: string;
   vehicle_number: string;
   vehicle_type: VehicleType;
+  bay_label?: string | null;
+  overstay_minutes?: number;
+  overstay_amount?: string;
+  overstay_paid_at?: string | null;
   renter_notes: string | null;
   hold_expires_at: string | null;
   confirmed_at: string | null;
@@ -463,4 +472,68 @@ export interface Payout {
   paid_at: string | null;
   created_at: string;
   booking_count: number;
+}
+
+
+export interface ArrivalState {
+  booking_id: string;
+  status: BookingStatus;
+  announced: boolean;
+  verified: boolean;
+  expired: boolean;
+  expires_at: string | null;
+  attempts_left: number | null;
+  waiting_minutes: number | null;
+  /** The provider has gone quiet for too long; offer the renter a way out. */
+  escalate: boolean;
+  /** Only ever populated on the provider's view. */
+  code: string | null;
+}
+
+
+export interface WaitingArrival {
+  booking_id: string;
+  reference: string;
+  space_title: string;
+  renter_name: string;
+  renter_phone: string | null;
+  vehicle_number: string;
+  code: string;
+  waiting_minutes: number;
+  expires_at: string;
+}
+
+
+export interface Bay {
+  slot_index: number;
+  label: string;
+  row_index: number;
+  col_index: number;
+  is_active: boolean;
+  /** null when no window was asked about — the question has no answer then. */
+  taken: boolean | null;
+}
+
+export interface BayLayout {
+  parking_space_id: string;
+  total_slots: number;
+  row_width: number;
+  bays: Bay[];
+}
+
+
+export interface OverstayQuote {
+  booking_id: string;
+  status: BookingStatus;
+  overstaying: boolean;
+  grace_ends_at: string;
+  overstay_minutes: number;
+  overstay_amount: string;
+  amount_due: string;
+  paid: boolean;
+  /** The meter has hit its cap and stopped accruing. */
+  meter_capped: boolean;
+  meter_stops_at: string;
+  hourly_rate: string;
+  currency: string;
 }

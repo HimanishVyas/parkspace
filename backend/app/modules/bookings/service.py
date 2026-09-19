@@ -32,6 +32,7 @@ from app.core.time import utcnow
 from app.modules.availability import service as availability_service
 from app.modules.availability.service import Unavailable
 from app.modules.bookings import pricing
+from app.modules.parking import bays
 from app.modules.bookings.models import (
     BLOCKING_STATUSES,
     CANCELLABLE_STATUSES,
@@ -200,11 +201,22 @@ async def create(
         else timedelta(minutes=config.payment_hold_minutes)
     )
 
+    # A renter who named a bay gets that bay or nothing. Retrying onto a
+    # different one would move somebody who chose the spot by the lift, and they
+    # would only discover it on arrival.
+    chosen = data.slot_index
+    if chosen is not None:
+        await bays.assert_bookable(db, space, chosen)
+
     # Retry loop: a lost race against a concurrent booking may free a different
     # slot, so re-read and try again rather than failing a still-bookable space.
-    for attempt in range(MAX_SLOT_RETRIES):
+    # It does not apply to a named bay — there is nowhere else to go.
+    attempts = 1 if chosen is not None else MAX_SLOT_RETRIES
+    for attempt in range(attempts):
         try:
-            slot_index = await availability_service.assert_available(db, space, start_at, end_at, data.unit)
+            slot_index = await availability_service.assert_available(
+                db, space, start_at, end_at, data.unit, want_slot=chosen
+            )
         except Unavailable as exc:
             raise Conflict(exc.reason, code=exc.code)
 
@@ -424,3 +436,33 @@ async def _list(db: AsyncSession, conditions: list, scope: str, limit: int, offs
         select(Booking).where(*conditions).order_by(Booking.start_at.desc()).limit(limit).offset(offset)
     )
     return list(rows.all()), int(total)
+
+
+async def end_parking(db: AsyncSession, booking: Booking, config: PlatformConfig) -> Booking:
+    """Renter says they are leaving. Closes the booking if nothing is owed.
+
+    A booking inside its window can be ended early — people leave early — and
+    that costs nothing extra. Past the grace period the meter is settled first,
+    because releasing the bay is the renter's side of the bargain and paying is
+    theirs too.
+    """
+    from app.modules.bookings import overstay
+
+    if booking.status == BookingStatus.COMPLETED:
+        return booking  # idempotent: tapping twice is not an error
+    if booking.status not in (BookingStatus.ACTIVE, BookingStatus.OVERSTAYING):
+        raise Conflict(
+            f"A {booking.status.value.lower()} booking cannot be ended", code="INVALID_STATE"
+        )
+
+    now = utcnow()
+    owed = overstay.freeze(booking, config, now)
+    if owed > 0 and booking.overstay_paid_at is None:
+        raise Conflict(
+            "Pay for the extra time before you finish", code="OVERSTAY_UNPAID"
+        )
+
+    booking.status = BookingStatus.COMPLETED
+    booking.completed_at = now
+    await db.flush()
+    return booking

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import MapView from "../../components/Map";
+import MapView from "../../components/LazyMap";
 import { Alert, ErrorMessage, Field, Loading, Panel } from "../../components/ui";
 import { api } from "../../lib/api";
 import { PARKING_TYPE_LABEL, UNIT_LABEL, VEHICLE_LABEL } from "../../lib/format";
@@ -45,6 +45,7 @@ export default function ListingForm() {
     access_instructions: "",
     total_slots: 1,
     requires_approval: false,
+    requires_arrival_code: false,
   });
   const [prices, setPrices] = useState<Record<PricingUnit, string>>({
     HOURLY: "50",
@@ -72,6 +73,7 @@ export default function ListingForm() {
       access_instructions: space.access_instructions ?? "",
       total_slots: space.total_slots,
       requires_approval: space.requires_approval,
+      requires_arrival_code: space.requires_arrival_code ?? false,
     });
     setPrices({
       HOURLY: space.prices.find((p) => p.unit === "HOURLY")?.amount ?? "",
@@ -247,6 +249,23 @@ export default function ListingForm() {
                   Review each booking before it is paid for
                   <span className="field__hint" style={{ display: "block" }}>
                     Slower for renters, but you approve who parks.
+                  </span>
+                </span>
+              </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={form.requires_arrival_code}
+                  onChange={(event) =>
+                    setForm({ ...form, requires_arrival_code: event.target.checked })
+                  }
+                />
+                <span>
+                  Renters must check in with a code
+                  <span className="field__hint" style={{ display: "block" }}>
+                    For gates with nobody on them. When a renter arrives we send you a 6-digit
+                    code; you pass it on and they enter it to start parking. Their booking will
+                    not start until they do.
                   </span>
                 </span>
               </label>

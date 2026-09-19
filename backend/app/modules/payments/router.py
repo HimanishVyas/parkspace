@@ -62,6 +62,49 @@ async def confirm_payment(data: PaymentConfirm, user: CurrentUser, db: DB, backg
     return await serializers.to_out(db, booking, user, config)
 
 
+@router.post(
+    "/sandbox/complete",
+    response_model=BookingOut,
+    dependencies=[Depends(rate_limit("payment_confirm", 30, 60))],
+)
+async def sandbox_complete(data: PaymentCreate, user: CurrentUser, db: DB, background: BackgroundTasks):
+    """Simulate a successful gateway payment, for the mock gateway only.
+
+    Exists so the sandbox checkout does not need SubtleCrypto in the browser,
+    which is unavailable on a non-secure origin such as a plain-http LAN address.
+    """
+    booking = await booking_service.get_for_user(db, data.booking_id, user)
+    payment, booking = await service.sandbox_complete(db, booking, user)
+    config = await get_config(db)
+    await notifications.booking_confirmed(db, background, booking)
+    await db.commit()
+    await db.refresh(booking)
+    return await serializers.to_out(db, booking, user, config)
+
+
+@router.post(
+    "/overstay",
+    response_model=PaymentSession,
+    dependencies=[Depends(rate_limit("payment_create", 20, 60))],
+)
+async def create_overstay_payment(data: PaymentCreate, user: CurrentUser, db: DB):
+    """Open a gateway order for the extra time owed on a booking that ran over."""
+    booking = await booking_service.get_for_user(db, data.booking_id, user)
+    config = await get_config(db)
+    payment, client_payload = await service.start_overstay_payment(db, booking, user, config)
+    await db.commit()
+    await db.refresh(payment)
+    return PaymentSession(
+        payment_id=payment.id,
+        booking_id=booking.id,
+        gateway=payment.gateway,
+        order_id=payment.gateway_order_id,
+        amount=payment.amount,
+        currency=payment.currency,
+        client_payload=client_payload,
+    )
+
+
 @router.get("/booking/{booking_id}", response_model=PaymentOut | None)
 async def get_booking_payment(booking_id: uuid.UUID, user: CurrentUser, db: DB):
     await booking_service.get_for_user(db, booking_id, user)

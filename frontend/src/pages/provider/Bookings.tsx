@@ -1,4 +1,5 @@
 import { useState } from "react";
+import ArrivalQueue from "../../components/ArrivalQueue";
 import { Badge, Empty, ErrorMessage, Field, Loading, Pagination, Panel, Tabs } from "../../components/ui";
 import { api } from "../../lib/api";
 import { bookingBadge, bookingWindow, money } from "../../lib/format";
@@ -41,6 +42,7 @@ export default function ProviderBookings() {
 
   return (
     <main className="page">
+      <ArrivalQueue />
       <div className="stack">
         <h1>Bookings</h1>
 
@@ -109,6 +111,12 @@ export default function ProviderBookings() {
                           <span className="muted">Vehicle: </span>
                           <span className="numeric">{booking.vehicle_number}</span> ({booking.vehicle_type})
                         </span>
+                        {booking.bay_label ? (
+                          <span>
+                            <span className="muted">Bay: </span>
+                            <span className="bold">{booking.bay_label}</span>
+                          </span>
+                        ) : null}
                       </div>
                     ) : (
                       <div className="small muted">

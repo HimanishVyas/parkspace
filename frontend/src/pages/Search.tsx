@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import MapView, { type MapMarker } from "../components/Map";
+import MapView, { type MapMarker } from "../components/LazyMap";
 import { Empty, ErrorMessage, Loading, Pagination, Stars } from "../components/ui";
 import { api } from "../lib/api";
 import {

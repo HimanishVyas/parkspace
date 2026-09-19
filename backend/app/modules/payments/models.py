@@ -43,6 +43,9 @@ class Payment(UUIDPkMixin, TimestampMixin, Base):
     booking_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("bookings.id", ondelete="CASCADE"), index=True
     )
+    # A booking can be paid for twice: once up front, and again for an overstay
+    # top-up. Without this the two would be indistinguishable in reconciliation.
+    purpose: Mapped[str] = mapped_column(String(20), default="BOOKING", index=True)
     gateway: Mapped[str] = mapped_column(String(30))
     # The gateway's order/intent id the client uses to complete the payment.
     gateway_order_id: Mapped[str] = mapped_column(String(120))

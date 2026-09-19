@@ -1,5 +1,4 @@
 import { useState } from "react";
-import AdminNav from "../../components/AdminNav";
 import { Badge, ConfirmButton, Empty, ErrorMessage, Loading, Pagination } from "../../components/ui";
 import { api } from "../../lib/api";
 import { bookingBadge, bookingWindow, money } from "../../lib/format";
@@ -32,8 +31,7 @@ export default function Bookings() {
 
   return (
     <main className="page page--wide">
-      <h1>Admin</h1>
-      <AdminNav />
+      <h1>Bookings</h1>
 
       <div className="stack">
         <div className="row">

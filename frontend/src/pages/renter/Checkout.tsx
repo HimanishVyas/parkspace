@@ -1,10 +1,15 @@
 /**
  * Payment step.
  *
- * With the mock gateway the browser signs the order itself, standing in for a
- * hosted checkout so the whole flow can be exercised without leaving the
- * machine. With a real gateway this is where its SDK would open; the
- * `confirm` call the server verifies is identical either way.
+ * With the mock gateway the server completes the sandbox payment on request,
+ * standing in for a hosted checkout so the whole flow can be exercised without
+ * leaving the machine. With a real gateway this is where its SDK would open,
+ * and the `confirm` call the server verifies is the real one either way.
+ *
+ * The sandbox signature used to be computed here with SubtleCrypto, which
+ * browsers only expose on a secure context — so paying failed on any plain-http
+ * address that was not localhost. It signs nothing the browser could keep
+ * secret anyway, so it now lives on the server.
  */
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -47,15 +52,9 @@ export default function Checkout() {
   const pay = useSubmit(async () => {
     if (!session) return;
     if (session.gateway === "mock") {
-      // The sandbox signs client-side with the shared test secret; the server
-      // still verifies the signature exactly as it would a real gateway's.
-      const paymentId = String(session.client_payload.mock_payment_id ?? "");
-      const signature = await mockSignature(session.order_id, paymentId);
-      await api.post<Booking>("/payments/confirm", {
-        order_id: session.order_id,
-        payment_id: paymentId,
-        signature,
-      });
+      // The server signs and verifies the sandbox payment; no browser crypto,
+      // so this works on any origin.
+      await api.post<Booking>("/payments/sandbox/complete", { booking_id: bookingId });
       navigate(`/bookings/${bookingId}`, { replace: true });
       return;
     }
@@ -161,26 +160,6 @@ export default function Checkout() {
       </div>
     </main>
   );
-}
-
-/** HMAC-SHA256 of "order|payment" with the sandbox secret, via SubtleCrypto. */
-async function mockSignature(orderId: string, paymentId: string): Promise<string> {
-  const secret = import.meta.env.VITE_MOCK_GATEWAY_SECRET ?? "mock-gateway-secret";
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(`${orderId}|${paymentId}`),
-  );
-  return Array.from(new Uint8Array(signature))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 async function openRazorpay(

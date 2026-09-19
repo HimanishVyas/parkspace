@@ -220,8 +220,14 @@ async def assert_available(
     end_at: datetime,
     unit: PricingUnit,
     exclude_booking_id: uuid.UUID | None = None,
+    want_slot: int | None = None,
 ) -> int:
-    """Validate a window and return the slot index to use. Raises `Unavailable`."""
+    """Validate a window and return the slot index to use. Raises `Unavailable`.
+
+    `want_slot` pins the answer to one bay the renter chose: it is either free
+    or the booking fails. Without it the lowest free slot is assigned, which is
+    the original behaviour.
+    """
     rules = await get_rules(db, space.id)
     if not rules:
         raise Unavailable("This space has no availability set up yet", code="NO_AVAILABILITY")
@@ -229,6 +235,12 @@ async def assert_available(
         raise Unavailable("The space is not available for the selected times", code="OUTSIDE_AVAILABILITY")
     if await get_blocks(db, space.id, start_at, end_at):
         raise Unavailable("The provider has blocked this period", code="BLOCKED")
+    if want_slot is not None:
+        taken = await taken_slots(db, space.id, start_at, end_at, exclude_booking_id)
+        if want_slot in taken:
+            raise Unavailable("That bay is already booked for the selected times", code="ALREADY_BOOKED")
+        return want_slot
+
     slot_index = await find_free_slot(db, space, start_at, end_at, exclude_booking_id)
     if slot_index is None:
         raise Unavailable("This space is already booked for the selected times", code="ALREADY_BOOKED")

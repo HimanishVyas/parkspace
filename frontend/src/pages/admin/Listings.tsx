@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import AdminNav from "../../components/AdminNav";
 import { Badge, Empty, ErrorMessage, Loading, Pagination, Stars } from "../../components/ui";
 import { api } from "../../lib/api";
 import { dateOnly, listingBadge } from "../../lib/format";
@@ -34,8 +33,7 @@ export default function Listings() {
 
   return (
     <main className="page page--wide">
-      <h1>Admin</h1>
-      <AdminNav />
+      <h1>Listings</h1>
 
       <div className="stack">
         <div className="row">

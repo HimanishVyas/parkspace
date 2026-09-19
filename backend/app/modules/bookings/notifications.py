@@ -167,3 +167,80 @@ async def booking_completed(
         {"booking_id": str(booking.id), "reference": booking.reference},
     )
     return note, renter.email
+
+
+async def arrival_announced(
+    db: AsyncSession,
+    background: BackgroundTasks | None,
+    booking: Booking,
+    code: str,
+    ttl_minutes: int,
+) -> None:
+    """Tell the provider a renter is at the gate, and give them the code.
+
+    Only the provider is sent the code — the whole mechanism rests on the renter
+    not being able to produce it themselves.
+    """
+    space = booking.parking_space
+    data = {"booking_id": str(booking.id), "reference": booking.reference}
+    provider_user = await _provider_user(db, booking)
+    if provider_user is not None:
+        await notify(
+            db,
+            background,
+            provider_user,
+            "ARRIVAL_CODE",
+            f"Arrival code {code}",
+            f"A renter has arrived at {space.title} for booking {booking.reference} "
+            f"(vehicle {booking.vehicle_number}). Share this code with them to let them in: "
+            f"{code}. It expires in {ttl_minutes} minutes.",
+            {**data, "code": code},
+        )
+    renter = await db.get(User, booking.renter_id)
+    if renter is not None:
+        await notify(
+            db,
+            background,
+            renter,
+            "ARRIVAL_ANNOUNCED",
+            "We've told the provider you're here",
+            f"Ask them for your {6}-digit code and enter it to start parking at {space.title}.",
+            data,
+            email=False,  # they are standing at a gate holding their phone
+        )
+
+
+async def arrival_verified(
+    db: AsyncSession, background: BackgroundTasks | None, booking: Booking
+) -> None:
+    space = booking.parking_space
+    await _both(
+        db,
+        background,
+        booking,
+        "ARRIVAL_VERIFIED",
+        "You're checked in",
+        f"Your parking at {space.title} has started. Reference {booking.reference}.",
+        "Renter checked in",
+        f"{booking.vehicle_number} has checked in at {space.title} "
+        f"(booking {booking.reference}).",
+    )
+
+
+async def overstay_started(
+    db: AsyncSession, background: BackgroundTasks | None, booking: Booking
+) -> None:
+    """The meter has started. Said plainly, with the number, and without scolding."""
+    space = booking.parking_space
+    await _both(
+        db,
+        background,
+        booking,
+        "OVERSTAY_STARTED",
+        "Your parking has run over",
+        f"Your booking at {space.title} ended and the extra time is now being charged. "
+        f"Open the booking to see what is owed and finish up.",
+        "A renter has run over",
+        f"{booking.vehicle_number} is still at {space.title} past the end of booking "
+        f"{booking.reference}. The extra time is being charged.",
+    )

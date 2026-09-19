@@ -55,6 +55,34 @@ class PlatformConfig(BaseModel):
     # Hours before start to send a reminder notification.
     reminder_hours_before: float = Field(default=2, ge=0, le=72)
 
+    # --- Arrival verification (PRD §18 extension) --------------------------- #
+    # How long an arrival code stays valid. Long enough for a missed call and a
+    # call back, short enough that a code overheard earlier is useless.
+    arrival_code_ttl_minutes: int = Field(default=10, ge=1, le=120)
+    # Wrong guesses allowed before the code is burned and must be re-requested.
+    arrival_code_max_attempts: int = Field(default=5, ge=1, le=20)
+    # How close the renter must be to announce arrival. Generous, because urban
+    # GPS drifts badly between tall buildings.
+    arrival_geofence_metres: int = Field(default=150, ge=20, le=2000)
+    # After this long with no code from the provider, the renter is offered a
+    # support route instead of a dead end.
+    arrival_escalate_minutes: int = Field(default=10, ge=1, le=120)
+    # How early before start a renter may announce arrival.
+    arrival_early_minutes: int = Field(default=30, ge=0, le=240)
+
+    # --- Overstay ---------------------------------------------------------- #
+    # Free lateness. Absorbs ordinary delay without a charge that feels punitive.
+    overstay_grace_minutes: int = Field(default=15, ge=0, le=240)
+    # Multiple of the hourly rate once the meter runs. Above normal so it
+    # discourages overstaying, below a penalty that invites a dispute.
+    overstay_rate_multiplier: float = Field(default=1.5, ge=1, le=10)
+    # Billed in whole blocks: per-minute pricing produces amounts nobody can
+    # check, quarter-hours read cleanly on a receipt.
+    overstay_increment_minutes: int = Field(default=15, ge=1, le=120)
+    # The meter stops here. Without an exit sensor an abandoned booking would
+    # otherwise accrue forever and block the bay for good.
+    overstay_max_hours: int = Field(default=12, ge=1, le=72)
+
     @model_validator(mode="after")
     def _slot_divides_hour(self):
         if 60 % self.booking_slot_minutes != 0:
@@ -63,6 +91,15 @@ class PlatformConfig(BaseModel):
 
 
 class PlatformConfigUpdate(BaseModel):
+    overstay_grace_minutes: int | None = None
+    overstay_rate_multiplier: float | None = None
+    overstay_increment_minutes: int | None = None
+    overstay_max_hours: int | None = None
+    arrival_code_ttl_minutes: int | None = None
+    arrival_code_max_attempts: int | None = None
+    arrival_geofence_metres: int | None = None
+    arrival_escalate_minutes: int | None = None
+    arrival_early_minutes: int | None = None
     renter_fee_percent: float | None = None
     tax_percent: float | None = None
     commission_percent: float | None = None

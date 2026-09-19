@@ -78,6 +78,9 @@ class ParkingSpace(UUIDPkMixin, TimestampMixin, Base):
     total_slots: Mapped[int] = mapped_column(Integer, default=1)
     # When true the provider must approve each booking before payment is captured.
     requires_approval: Mapped[bool] = mapped_column(Boolean, default=False)
+    # When true a confirmed booking only becomes ACTIVE once the renter enters a
+    # code the provider gives them on arrival. For spaces with nobody at the gate.
+    requires_arrival_code: Mapped[bool] = mapped_column(Boolean, default=False)
 
     status: Mapped[ListingStatus] = mapped_column(str_enum(ListingStatus), default=ListingStatus.DRAFT, index=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text)
@@ -135,3 +138,38 @@ class ParkingPhoto(UUIDPkMixin, TimestampMixin, Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
     parking_space: Mapped[ParkingSpace] = relationship(back_populates="photos")
+
+
+class ParkingBay(UUIDPkMixin, TimestampMixin, Base):
+    """One named, placed parking bay.
+
+    This is a label and a grid position for a `slot_index` that already exists:
+    bookings have always occupied a numbered slot, and the exclusion constraint
+    `(parking_space_id, slot_index, period)` has always kept two cars out of one
+    bay. Nothing about the concurrency guarantee changes here — the renter simply
+    gets to choose the number instead of the server picking the lowest free one.
+
+    `slot_index` is therefore the join to `bookings.slot_index` and must stay
+    within the space's `total_slots`.
+    """
+
+    __tablename__ = "parking_bays"
+    __table_args__ = (
+        CheckConstraint("slot_index >= 0", name="bay_slot_index_non_negative"),
+        Index("uq_parking_bays_space_slot", "parking_space_id", "slot_index", unique=True),
+    )
+
+    parking_space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("parking_spaces.id", ondelete="CASCADE"), index=True
+    )
+    slot_index: Mapped[int] = mapped_column(Integer)
+    # What is painted on the floor, e.g. "A-12". Renters and guards say this out
+    # loud to each other, so it is the provider's words, not ours.
+    label: Mapped[str] = mapped_column(String(20))
+    # Where it sits on the picker grid.
+    row_index: Mapped[int] = mapped_column(Integer, default=0)
+    col_index: Mapped[int] = mapped_column(Integer, default=0)
+    # A bay out of service stays in the layout but cannot be booked.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    parking_space: Mapped[ParkingSpace] = relationship()

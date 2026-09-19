@@ -4,6 +4,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+# Vite inlines VITE_* at build time, so the key must be present here rather than
+# at container start. Empty is fine: the map falls back to keyless OSM tiles.
+ARG VITE_MAPTILER_KEY=""
+ENV VITE_MAPTILER_KEY=$VITE_MAPTILER_KEY
 RUN npm run build
 
 # --- serve ---

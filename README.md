@@ -216,6 +216,7 @@ git-ignored.
 | `MAINTENANCE_INTERVAL_SECONDS` | `60` | How often it ticks |
 | `RATE_LIMIT_ENABLED` | `true` | Rate limits on sensitive endpoints |
 | `SEED_ADMIN_EMAIL` / `_PASSWORD` | `admin@example.com` / `admin12345` | Bootstrap admin |
+| `VITE_MAPTILER_KEY` | *(empty)* | Vector basemaps. Read at **frontend build** time — rebuild the web image to apply. Empty falls back to keyless OpenStreetMap raster tiles. |
 
 Business rules — commission, fees, cancellation policy, hold durations, booking
 limits — are **not** environment variables. They live in the `platform_settings`
