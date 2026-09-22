@@ -5,6 +5,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.core import startup
 from app.core.config import settings
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging
@@ -55,6 +56,11 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    # Before anything is wired up, so an insecure production process fails to
+    # boot rather than coming up healthy and quietly doing the wrong thing.
+    configure_logging()
+    startup.verify(settings)
+
     app = FastAPI(
         title=settings.app_name,
         version="1.0.0",

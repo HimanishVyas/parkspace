@@ -26,10 +26,19 @@ async def wait():
 asyncio.run(wait())
 PY
 
-echo "Running migrations..."
-alembic upgrade head
+# Migrations and seeding are a deploy step, not a start-up step: several
+# replicas starting together would otherwise race each other through them.
+# Compose runs a single api container, so the default keeps `docker-compose up`
+# working end to end; set RUN_MIGRATIONS=false everywhere else and run
+# `alembic upgrade head` once, before the new version starts rolling out.
+if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
+    echo "Running migrations..."
+    alembic upgrade head
 
-echo "Seeding platform defaults..."
-python -m app.cli seed
+    echo "Seeding platform defaults..."
+    python -m app.cli seed
+else
+    echo "Skipping migrations (RUN_MIGRATIONS=false)"
+fi
 
 exec "$@"

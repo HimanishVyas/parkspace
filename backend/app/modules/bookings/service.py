@@ -106,6 +106,22 @@ def validate_timing(start_at: datetime, end_at: datetime, config: PlatformConfig
             f"Bookings can be made at most {config.booking_max_advance_days} days in advance",
             code="TOO_FAR_AHEAD",
         )
+    assert_window_bounded(start_at, end_at, config)
+
+
+def assert_window_bounded(start_at: datetime, end_at: datetime, config: PlatformConfig) -> None:
+    """Refuse a window longer than the platform allows.
+
+    Bounding the far end matters as much as bounding the near one. An unbounded
+    window is a lever on how much work a single request costs the server, and on
+    how large a total the money columns are asked to hold — so it is checked
+    before anything is priced or searched, not after.
+    """
+    if end_at - start_at > timedelta(days=config.booking_max_window_days):
+        raise ValidationFailed(
+            f"A booking can run for at most {config.booking_max_window_days} days",
+            code="WINDOW_TOO_LONG",
+        )
 
 
 async def _provider_share_for(db: AsyncSession, space: ParkingSpace) -> Decimal | None:
@@ -131,6 +147,10 @@ async def quote(
     config: PlatformConfig,
 ) -> tuple[PriceBreakdown, bool, str | None]:
     """Price a window and report whether it can actually be booked."""
+    # An over-long window is a malformed request rather than a priced-but-
+    # unavailable one, so it is refused outright instead of coming back with a
+    # breakdown nobody could act on.
+    assert_window_bounded(start_at, end_at, config)
     try:
         breakdown = pricing.calculate(
             space,

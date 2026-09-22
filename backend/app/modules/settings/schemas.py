@@ -48,6 +48,9 @@ class PlatformConfig(BaseModel):
     listing_requires_approval: bool = False
     # How far into the future a booking may start.
     booking_max_advance_days: int = Field(default=180, ge=1, le=730)
+    # How long a single booking may run for. Bounds the work any one request can
+    # ask the server to do, and keeps a quote from overflowing the money columns.
+    booking_max_window_days: int = Field(default=400, ge=1, le=1830)
     # Minimum minutes between now and booking start.
     booking_min_lead_minutes: int = Field(default=0, ge=0, le=10080)
     # Booking start/end must align to this many minutes.
@@ -108,6 +111,7 @@ class PlatformConfigUpdate(BaseModel):
     approval_window_hours: int | None = None
     listing_requires_approval: bool | None = None
     booking_max_advance_days: int | None = None
+    booking_max_window_days: int | None = None
     booking_min_lead_minutes: int | None = None
     booking_slot_minutes: int | None = None
     reminder_hours_before: float | None = None

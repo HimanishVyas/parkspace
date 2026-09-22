@@ -75,9 +75,10 @@ async def test_booking_activates_then_completes(db, provider, renter):
     assert counts["activated"] == 1
     assert (await renter.get(f"/bookings/{booking['id']}")).json()["status"] == "ACTIVE"
 
-    # ...and now that it has passed, within the grace period. A booking that
-    # runs further over than that becomes an overstay instead of completing for
-    # free — see test_overstay.py.
+    # ...and now that it has passed. The sweep leaves an ACTIVE booking alone:
+    # with no exit sensor, a booking nobody closed out means a car still in the
+    # bay. Completing it here would also always beat the meter, since the sweep
+    # runs every minute — see test_overstay.py.
     await db.execute(
         update(Booking)
         .where(Booking.id == booking["id"])
@@ -85,8 +86,14 @@ async def test_booking_activates_then_completes(db, provider, renter):
     )
     await db.commit()
     counts = await run_once(db)
-    assert counts["completed"] == 1
-    assert (await renter.get(f"/bookings/{booking['id']}")).json()["status"] == "COMPLETED"
+    assert counts["completed"] == 0
+    assert (await renter.get(f"/bookings/{booking['id']}")).json()["status"] == "ACTIVE"
+
+    # The renter closing it out themselves is what completes it, and costs
+    # nothing inside the grace period.
+    done = await renter.post(f"/bookings/{booking['id']}/end")
+    assert done.status_code == 200, done.text
+    assert done.json()["status"] == "COMPLETED"
 
 
 async def test_a_booking_left_running_past_grace_becomes_an_overstay(db, provider, renter):

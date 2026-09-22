@@ -60,7 +60,7 @@ def _to_result(hit: service.SearchHit) -> SearchResult:
 # --------------------------------------------------------------------------- #
 # Public search & discovery
 # --------------------------------------------------------------------------- #
-@router.get("", response_model=SearchResponse)
+@router.get("", response_model=SearchResponse, dependencies=[Depends(rate_limit("search", 60, 60))])
 async def search_parking(
     db: DB,
     latitude: float | None = Query(default=None, ge=-90, le=90),
@@ -81,6 +81,13 @@ async def search_parking(
     """Search published listings. Supply `start_at`/`end_at` to see only spaces
     that are actually free then — Principle 4: never show unavailable parking as
     available."""
+    if start_at is not None and end_at is not None:
+        # This endpoint is public, so the window it accepts is the window an
+        # anonymous caller can make the server reason about. Hold it to the same
+        # bound a booking gets.
+        from app.modules.bookings.service import assert_window_bounded
+
+        assert_window_bounded(start_at, end_at, await get_config(db))
     params = service.SearchParams(
         latitude=latitude,
         longitude=longitude,

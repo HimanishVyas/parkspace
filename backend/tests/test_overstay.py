@@ -8,6 +8,8 @@ import uuid
 from datetime import timedelta
 from decimal import Decimal
 
+from sqlalchemy import update
+
 from app.core.time import utcnow
 from app.modules.bookings import maintenance, overstay
 from app.modules.bookings.models import Booking, BookingStatus
@@ -156,15 +158,51 @@ async def test_maintenance_moves_a_late_booking_onto_the_meter(provider, renter,
     assert row.overstay_amount > 0
 
 
-async def test_a_booking_that_ended_on_time_is_just_completed(provider, renter, db):
-    _, _, row = await parked_booking(provider, renter, db, ended_minutes_ago=5, plate="GJ01OS0008")
+async def test_a_booking_inside_grace_is_left_for_the_renter_to_close(provider, renter, db):
+    """The sweep must not close an ACTIVE booking out for free.
+
+    It runs every minute, so it would always reach a booking one minute past its
+    end — inside the grace period — and nothing would ever survive to reach the
+    meter. Leaving on time is something the renter says, through /end.
+    """
+    _, booking, row = await parked_booking(provider, renter, db, ended_minutes_ago=5, plate="GJ01OS0008")
     config = await get_config(db)
     assert await maintenance.start_overstays(db, config) == []
-    finished = await maintenance.complete_finished(db, config)
+    assert await maintenance.complete_finished(db, config) == []
     await db.commit()
     await db.refresh(row)
-    assert row.id in {b.id for b in finished}
-    assert row.status == BookingStatus.COMPLETED
+    assert row.status == BookingStatus.ACTIVE
+
+    done = await renter.post(f"/bookings/{booking['id']}/end")
+    assert done.status_code == 200, done.text
+    assert done.json()["status"] == "COMPLETED"
+
+
+async def test_the_meter_is_reachable_under_a_repeating_sweep(provider, renter, db):
+    """The regression that made every overstay unreachable.
+
+    Calling the transitions once, on a booking already well past grace, hid it.
+    The live scheduler sees a booking every minute from the moment it ends, and
+    it is that first pass — inside the grace period — that used to close it.
+    """
+    _, _, row = await parked_booking(provider, renter, db, ended_minutes_ago=1, plate="GJ01OS0016")
+    config = await get_config(db)
+    end_at = row.end_at
+
+    # Sweep once a minute across the grace boundary, as the scheduler does.
+    for minutes_past_end in range(1, config.overstay_grace_minutes + 3):
+        await db.execute(
+            update(Booking)
+            .where(Booking.id == row.id)
+            .values(end_at=utcnow() - timedelta(minutes=minutes_past_end))
+        )
+        await db.commit()
+        await maintenance.run_once(db)
+
+    await db.refresh(row)
+    assert row.status == BookingStatus.OVERSTAYING, "the meter must survive a repeating sweep"
+    assert row.overstay_amount > 0
+    assert end_at is not None
 
 
 async def test_an_abandoned_overstay_is_eventually_released(provider, renter, db):

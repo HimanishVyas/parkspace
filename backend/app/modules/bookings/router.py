@@ -29,7 +29,11 @@ from app.modules.settings.service import get_config
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
 
-@router.post("/quote", response_model=QuoteResponse)
+@router.post(
+    "/quote",
+    response_model=QuoteResponse,
+    dependencies=[Depends(rate_limit("quote", 60, 60))],
+)
 async def quote_booking(data: QuoteRequest, db: DB):
     """Price a window and say whether it is bookable, without reserving anything.
 

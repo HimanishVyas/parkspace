@@ -2,6 +2,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 
+from app.core.config import settings
 from app.core.deps import DB, CurrentUser
 from app.core.ratelimit import rate_limit
 from app.modules.bookings import notifications, serializers, service as booking_service
@@ -62,11 +63,6 @@ async def confirm_payment(data: PaymentConfirm, user: CurrentUser, db: DB, backg
     return await serializers.to_out(db, booking, user, config)
 
 
-@router.post(
-    "/sandbox/complete",
-    response_model=BookingOut,
-    dependencies=[Depends(rate_limit("payment_confirm", 30, 60))],
-)
 async def sandbox_complete(data: PaymentCreate, user: CurrentUser, db: DB, background: BackgroundTasks):
     """Simulate a successful gateway payment, for the mock gateway only.
 
@@ -80,6 +76,18 @@ async def sandbox_complete(data: PaymentCreate, user: CurrentUser, db: DB, backg
     await db.commit()
     await db.refresh(booking)
     return await serializers.to_out(db, booking, user, config)
+
+
+# Registered only where it is explicitly allowed. This route marks a booking
+# paid with no gateway involved, so on a real deployment it should not exist at
+# all — not merely refuse. Guarding it inside the handler left it reachable on
+# any deploy that came up with the shipped defaults.
+if settings.allow_sandbox_payments and settings.payment_gateway == "mock":
+    router.post(
+        "/sandbox/complete",
+        response_model=BookingOut,
+        dependencies=[Depends(rate_limit("payment_confirm", 30, 60))],
+    )(sandbox_complete)
 
 
 @router.post(

@@ -20,6 +20,7 @@ os.environ.update(
     RATE_LIMIT_ENABLED="false",
     MAINTENANCE_ENABLED="false",
     PAYMENT_GATEWAY="mock",
+    ALLOW_SANDBOX_PAYMENTS="true",
     MOCK_GATEWAY_SECRET="test-gateway-secret",
     EMAIL_BACKEND="console",
     REDIS_URL="",

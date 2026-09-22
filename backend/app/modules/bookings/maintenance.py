@@ -10,7 +10,7 @@ is moving out of, so a missed tick or an overlapping run changes nothing.
 import logging
 from datetime import timedelta
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import utcnow
@@ -87,25 +87,29 @@ async def start_overstays(db: AsyncSession, config: PlatformConfig) -> list[Book
 async def complete_finished(db: AsyncSession, config: PlatformConfig) -> list[Booking]:
     """Close out bookings whose window has passed.
 
-    Three groups end here:
+    Two groups end here:
       - CONFIRMED but never started: nobody turned up, nothing to bill.
-      - ACTIVE but still inside the grace period: they left on time enough.
       - OVERSTAYING past the meter cap: the meter has stopped, so the bay is
         released and whatever accrued stays on the booking as owed. Holding the
         bay indefinitely for an abandoned car helps nobody.
+
+    An ACTIVE booking is deliberately not in that list. There is no exit sensor,
+    so a car whose booking has ended and which nobody has closed out is, as far
+    as this system can tell, still in the bay — that is what `start_overstays`
+    is for. Completing it here instead meant this sweep always won the race: it
+    runs every minute, so it caught every ACTIVE booking one minute past its end
+    (inside the grace period) and closed it for free. Nothing ever survived long
+    enough to reach the meter, and the whole overstay path was unreachable.
+
+    A renter who leaves on time closes the booking themselves through
+    `end_parking`, which costs nothing inside the grace period.
     """
     now = utcnow()
-    grace_cutoff = now - timedelta(minutes=config.overstay_grace_minutes)
     capped = now - timedelta(hours=config.overstay_max_hours)
     rows = await db.scalars(
         select(Booking).where(
             or_(
-                and_(
-                    Booking.status.in_([BookingStatus.ACTIVE, BookingStatus.CONFIRMED]),
-                    Booking.end_at <= now,
-                    Booking.end_at > grace_cutoff,
-                ),
-                and_(Booking.status == BookingStatus.CONFIRMED, Booking.end_at <= grace_cutoff),
+                and_(Booking.status == BookingStatus.CONFIRMED, Booking.end_at <= now),
                 and_(Booking.status == BookingStatus.OVERSTAYING, Booking.end_at <= capped),
             )
         )
@@ -136,9 +140,33 @@ async def due_reminders(db: AsyncSession, config: PlatformConfig) -> list[Bookin
     return due
 
 
+# Arbitrary but fixed: the key two processes agree on to mean "the maintenance
+# pass". Advisory locks are namespaced per database, so one constant is enough.
+_MAINTENANCE_LOCK_KEY = 0x7061726B  # "park"
+
+
+async def _acquire_lock(db: AsyncSession) -> bool:
+    """Try to become the one process running this pass.
+
+    `expire_holds` and `activate_started` are single atomic UPDATEs and would be
+    safe unsynchronised, but the other three select rows and then mutate them in
+    Python. Two workers doing that together send duplicate reminders and
+    duplicate completion emails, and both stamp `reminder_sent_at`. A session
+    advisory lock is the cheapest way to make the pass single-writer without
+    adding infrastructure; it is released when the transaction ends.
+    """
+    return bool(await db.scalar(select(func.pg_try_advisory_xact_lock(_MAINTENANCE_LOCK_KEY))))
+
+
 async def run_once(db: AsyncSession) -> dict[str, int]:
     """One maintenance pass. Returns a count per transition, for logging/tests."""
     from app.modules.settings.service import get_config
+
+    if not await _acquire_lock(db):
+        # Another worker is mid-pass. Everything here is idempotent, so the
+        # right move is to skip rather than queue behind it.
+        logger.debug("Maintenance pass already running elsewhere; skipping")
+        return {"expired": 0, "activated": 0, "overstaying": 0, "completed": 0, "reminders": 0}
 
     config = await get_config(db)
     expired = await expire_holds(db)

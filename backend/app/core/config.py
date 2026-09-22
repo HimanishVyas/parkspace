@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     razorpay_webhook_secret: str = ""
     # Secret used by the mock gateway to sign simulated payments.
     mock_gateway_secret: str = "mock-gateway-secret"
+    # Opt-in for `POST /payments/sandbox/complete`, which marks a booking paid
+    # with no gateway involved. Defaults to off and has to be turned on
+    # deliberately: relying on `environment` alone meant a deploy that forgot one
+    # variable handed every renter free parking.
+    allow_sandbox_payments: bool = False
 
     # Email
     email_backend: Literal["console", "smtp"] = "console"

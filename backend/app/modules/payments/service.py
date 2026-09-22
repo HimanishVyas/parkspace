@@ -107,7 +107,11 @@ async def sandbox_complete(db: AsyncSession, booking: Booking, user: User):
     Refuses to run outside the mock gateway, and never in production.
     """
     gateway = get_gateway()
-    if gateway.name != "mock" or settings.environment == "production":
+    if (
+        gateway.name != "mock"
+        or not settings.allow_sandbox_payments
+        or settings.environment == "production"
+    ):
         raise Conflict(
             "Sandbox completion is only available with the mock gateway",
             code="NOT_SANDBOX",

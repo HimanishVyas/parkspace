@@ -98,23 +98,86 @@ def daily_segments(start_local: datetime, end_local: datetime) -> list[tuple[dat
     return segments
 
 
+DAYS_IN_WEEK = 7
+
+
+def weekdays_touched(first_day: date, span_days: int) -> set[int]:
+    """The distinct weekdays a run of `span_days` days from `first_day` covers.
+
+    Any run of a week or more touches all seven, so the answer never needs more
+    than seven steps however long the run is.
+    """
+    if span_days <= 0:
+        return set()
+    if span_days >= DAYS_IN_WEEK:
+        return set(range(DAYS_IN_WEEK))
+    start = first_day.weekday()
+    return {(start + offset) % DAYS_IN_WEEK for offset in range(span_days)}
+
+
+def _midnight(day: date, tz) -> datetime:
+    return datetime.combine(day, datetime.min.time(), tzinfo=tz)
+
+
+def _minutes_since(day_start: datetime, moment: datetime) -> int:
+    return int((moment - day_start).total_seconds() // 60)
+
+
 def rules_cover_window(
     rules: list[AvailabilityRule], start_at: datetime, end_at: datetime, unit: PricingUnit
 ) -> bool:
-    """Apply the per-unit coverage semantics described in the module docstring."""
+    """Apply the per-unit coverage semantics described in the module docstring.
+
+    Deliberately decided from the weekday *set* rather than by walking a segment
+    per calendar day. The two agree exactly — a weekday's rules are the same
+    whichever week it falls in — but this stays O(7) for any window length.
+    Walking day by day made `end_at` a CPU lever: an unauthenticated search with
+    a far-future end date blocked the event loop for seconds at a time.
+    """
     tz = local_tz()
     start_local = start_at.astimezone(tz)
     end_local = end_at.astimezone(tz)
-    segments = daily_segments(start_local, end_local)
-    if not segments:
+    if end_local <= start_local:
         return False
-    for day, start_minute, end_minute in segments:
-        available = intervals_for_weekday(rules, day.weekday())
-        if not available:
-            return False
-        if unit == PricingUnit.HOURLY and not covers(available, start_minute, end_minute):
-            return False
-    return True
+
+    first_day = start_local.date()
+    first_minute = _minutes_since(_midnight(first_day, tz), start_local)
+    # The window is half-open, so an end at exactly midnight belongs to the
+    # previous day rather than opening a new one.
+    last_day = (end_local - timedelta(microseconds=1)).date()
+    last_minute = _minutes_since(_midnight(last_day, tz), end_local)
+    # Availability is reasoned about in whole minutes, so a final day the window
+    # only clips by seconds contributes nothing and is not an operating day the
+    # renter needs.
+    if last_day > first_day and last_minute == 0:
+        last_day -= timedelta(days=1)
+        last_minute = MINUTES_PER_DAY
+    span_days = (last_day - first_day).days + 1
+    if span_days == 1 and last_minute <= first_minute:
+        return False
+
+    # Daily and monthly bookings reserve whole contiguous days, so the only
+    # question is whether every weekday they touch is an operating day.
+    if unit != PricingUnit.HOURLY:
+        return all(
+            intervals_for_weekday(rules, weekday)
+            for weekday in weekdays_touched(first_day, span_days)
+        )
+
+    # Hourly windows are checked to the minute, which differs between the first
+    # day, the last day, and the days fully enclosed between them.
+    if span_days == 1:
+        return covers(intervals_for_weekday(rules, first_day.weekday()), first_minute, last_minute)
+
+    if not covers(intervals_for_weekday(rules, first_day.weekday()), first_minute, MINUTES_PER_DAY):
+        return False
+    if not covers(intervals_for_weekday(rules, last_day.weekday()), 0, last_minute):
+        return False
+    # Enclosed days are held around the clock, so they must be open around the clock.
+    return all(
+        covers(intervals_for_weekday(rules, weekday), 0, MINUTES_PER_DAY)
+        for weekday in weekdays_touched(first_day + timedelta(days=1), span_days - 2)
+    )
 
 
 # --------------------------------------------------------------------------- #
