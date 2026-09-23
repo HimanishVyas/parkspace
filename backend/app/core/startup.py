@@ -29,6 +29,11 @@ _UNSAFE_DEFAULTS: list[tuple[str, object, str]] = [
 ]
 
 
+# RFC 7518 §3.2: an HMAC key should be at least as long as the hash it feeds.
+# Anything shorter weakens HS256 regardless of how unguessable it looks.
+MIN_JWT_SECRET_BYTES = 32
+
+
 def collect_problems(settings: Settings) -> list[str]:
     """Every reason this configuration is unfit to face the public internet."""
     problems = [
@@ -36,6 +41,14 @@ def collect_problems(settings: Settings) -> list[str]:
         for attribute, unsafe, remedy in _UNSAFE_DEFAULTS
         if getattr(settings, attribute) == unsafe
     ]
+    secret_bytes = len(settings.jwt_secret.encode())
+    if secret_bytes < MIN_JWT_SECRET_BYTES:
+        # Checking only that the secret was changed is not enough: a short one
+        # passes that test and still undermines every token the service issues.
+        problems.append(
+            f"jwt_secret is {secret_bytes} bytes, below the {MIN_JWT_SECRET_BYTES} "
+            "required for HS256 — generate one with `openssl rand -hex 32`"
+        )
     if settings.payment_gateway == "mock":
         problems.append(
             "payment_gateway is 'mock', which confirms bookings without taking money "

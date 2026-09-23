@@ -24,7 +24,7 @@ os.environ.update(
     MOCK_GATEWAY_SECRET="test-gateway-secret",
     EMAIL_BACKEND="console",
     REDIS_URL="",
-    JWT_SECRET="test-jwt-secret",
+    JWT_SECRET="test-jwt-secret-long-enough-for-hs256-0123456789",
     TIMEZONE="Asia/Kolkata",
     MEDIA_ROOT="/tmp/parkspace-test-media",
 )

@@ -23,7 +23,13 @@ def _configure(connection: Connection | None = None, url: str | None = None) -> 
         url=url,
         target_metadata=target_metadata,
         compare_type=True,
-        compare_server_default=True,
+        # Off deliberately. Several NOT NULL columns were added to tables that
+        # already had rows, which only works with a server default; the models
+        # carry no such default because it is a one-time backfill device, not
+        # part of the schema we want. With this on, autogenerate proposes
+        # dropping all of them on every run, which buries real drift in noise
+        # that must never be applied. Both migrations that added them say so.
+        compare_server_default=False,
         render_as_batch=False,
         include_schemas=False,
     )

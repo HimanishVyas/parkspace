@@ -61,13 +61,19 @@ def create_app() -> FastAPI:
     configure_logging()
     startup.verify(settings)
 
+    # The interactive docs enumerate every endpoint, its parameters and its
+    # schemas. That is exactly what you want while building and exactly what you
+    # do not want to hand an anonymous visitor in production, so they are served
+    # everywhere except there.
+    publish_docs = settings.environment != "production"
+
     app = FastAPI(
         title=settings.app_name,
         version="1.0.0",
         description="Marketplace for listing and booking unused parking spaces.",
-        openapi_url=f"{settings.api_prefix}/openapi.json",
-        docs_url="/docs",
-        redoc_url="/redoc",
+        openapi_url=f"{settings.api_prefix}/openapi.json" if publish_docs else None,
+        docs_url="/docs" if publish_docs else None,
+        redoc_url="/redoc" if publish_docs else None,
         lifespan=lifespan,
     )
 

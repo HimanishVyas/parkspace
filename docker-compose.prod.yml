@@ -1,0 +1,63 @@
+# Production overlay. Use with the base file, never on its own:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# What it changes, and why each one matters:
+#
+#   - the datastores stop publishing ports to the host entirely;
+#   - the api runs several workers, which only became safe once the maintenance
+#     pass took an advisory lock;
+#   - migrations stop running at container start, because several replicas
+#     coming up together would race each other through them;
+#   - TLS is terminated upstream, so the proxy CIDR has to be the real one.
+services:
+  db:
+    # No `ports` key at all. The api reaches it over the compose network; a
+    # published port is only ever a way in from somewhere else.
+    ports: !override []
+    healthcheck:
+      # A cold start on a fresh volume runs initdb first, which took longer
+      # than 10 x 5s here and left dependents giving up on a healthy database.
+      retries: 30
+
+  redis:
+    ports: !override []
+
+  api:
+    restart: unless-stopped
+    ports: !override []
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      # Migrations are a deploy step: run `alembic upgrade head` once, against
+      # the new image, before any of these containers start.
+      RUN_MIGRATIONS: "false"
+      # Whatever sits in front of nginx. Anything wider than the real proxy
+      # makes every per-IP rate limit bypassable by setting a header.
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:?set TRUSTED_PROXY_IPS to your load balancer CIDR}
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - ${TRUSTED_PROXY_IPS}
+      # Safe only because `run_once` now takes a transaction-scoped advisory
+      # lock -- before that, every worker ran its own maintenance loop and sent
+      # its own copy of every reminder.
+      - --workers
+      - ${API_WORKERS:-4}
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  web:
+    restart: unless-stopped
+    # Published to loopback only: the load balancer is expected to be the one
+    # thing that reaches it. Change to the interface your LB actually uses.
+    ports: !override
+      - "127.0.0.1:8080:80"

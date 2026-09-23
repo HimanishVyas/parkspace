@@ -15,7 +15,10 @@
  * never learns which one it got.
  */
 import { useEffect, useRef, useState } from "react";
-import maplibregl, { type StyleSpecification } from "maplibre-gl";
+// maplibre-gl v6 dropped its default export, so the whole module is imported
+// as a namespace. Every `maplibregl.X` call site below is unchanged.
+import * as maplibregl from "maplibre-gl";
+import type { StyleSpecification } from "maplibre-gl";
 
 export interface MapMarker {
   id: string;
@@ -156,10 +159,10 @@ export default function MapView({
       setFailed(true);
       return;
     }
-    map.on("error", (event) => console.warn("Map error", event?.error ?? event));
+    map.on("error", (event: maplibregl.ErrorEvent) => console.warn("Map error", event?.error ?? event));
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     map.addControl(new maplibregl.GeolocateControl({ trackUserLocation: false }), "top-right");
-    map.on("click", (event) => {
+    map.on("click", (event: maplibregl.MapMouseEvent) => {
       onPickRef.current?.(event.lngLat.lat, event.lngLat.lng);
     });
     map.on("load", () => setReady(true));

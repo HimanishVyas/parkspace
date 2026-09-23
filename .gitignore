@@ -26,3 +26,6 @@ frontend/dist/
 .vscode/
 .idea/
 .DS_Store
+
+# Generated production env (contains real secrets)
+.env.production

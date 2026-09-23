@@ -120,12 +120,18 @@ export default function Search() {
     longitude: result.longitude,
     active: focused === result.id,
     label: money(priceFor(result, unit), true),
+    // Every interpolated value is escaped, not just the obvious one. This
+    // string is handed to maplibre's setHTML, so anything unescaped here is
+    // script running on our own origin — where the session tokens live. `city`
+    // is provider-supplied free text and was going in raw.
     popupHtml: `
       <h4>${escapeHtml(result.title)}</h4>
-      <p>${PARKING_TYPE_LABEL[result.parking_type]} · ${
-        result.distance_km !== null ? `${result.distance_km.toFixed(1)} km away` : result.city
+      <p>${escapeHtml(PARKING_TYPE_LABEL[result.parking_type])} · ${
+        result.distance_km !== null
+          ? `${escapeHtml(result.distance_km.toFixed(1))} km away`
+          : escapeHtml(result.city)
       }</p>
-      <a href="/parking/${result.id}">View listing</a>`,
+      <a href="/parking/${encodeURIComponent(result.id)}">View listing</a>`,
   }));
 
   return (

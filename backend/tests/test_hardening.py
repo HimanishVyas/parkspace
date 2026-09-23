@@ -125,7 +125,7 @@ async def test_an_ordinary_window_is_still_allowed(client, provider):
 def _production(**overrides) -> Settings:
     base = {
         "environment": "production",
-        "jwt_secret": "a-real-secret",
+        "jwt_secret": "a-real-secret-that-is-at-least-32-bytes-long",
         "mock_gateway_secret": "a-real-mock-secret",
         "seed_admin_email": "ops@parkspace.app",
         "seed_admin_password": "a-real-password",
@@ -147,6 +147,9 @@ def test_a_correctly_configured_production_boots():
     "overrides, expected",
     [
         ({"jwt_secret": "change-me-in-env"}, "jwt_secret"),
+        # A changed-but-short secret passes the default check and still
+        # weakens every token the service issues.
+        ({"jwt_secret": "short"}, "below the 32 required"),
         ({"seed_admin_password": "admin12345"}, "seed_admin_password"),
         ({"seed_admin_email": "admin@example.com"}, "seed_admin_email"),
         ({"mock_gateway_secret": "mock-gateway-secret"}, "mock_gateway_secret"),
@@ -250,3 +253,34 @@ async def test_only_one_worker_runs_a_maintenance_pass(db, provider, renter):
         .where(Notification.event == "BOOKING_REMINDER")
     )
     assert reminders == 1, "one booking, one reminder notification"
+
+
+# --------------------------------------------------------------------------- #
+# Production must not publish its own API surface
+# --------------------------------------------------------------------------- #
+def _app_paths(**overrides):
+    import os
+    from unittest.mock import patch
+
+    import app.main as main
+
+    settings = _production(**overrides)
+    with patch.object(main, "settings", settings):
+        with patch.dict(os.environ, {}, clear=False):
+            application = main.create_app()
+    return application
+
+
+def test_docs_are_not_published_in_production():
+    """The interactive docs enumerate every endpoint and schema. Useful while
+    building, and a free map of the attack surface in production."""
+    application = _app_paths()
+    assert application.docs_url is None
+    assert application.redoc_url is None
+    assert application.openapi_url is None
+
+
+def test_docs_are_published_outside_production():
+    application = _app_paths(environment="development")
+    assert application.docs_url == "/docs"
+    assert application.openapi_url is not None
